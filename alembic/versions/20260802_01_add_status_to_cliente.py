@@ -10,17 +10,14 @@ import sqlalchemy as sa
 
 
 revision = "20260802_01"
-down_revision = None
+down_revision = "20260803_00"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "clientes",
-        sa.Column("status", sa.String(), nullable=False, server_default="ativo"),
-    )
+    pass
 
 
 def downgrade() -> None:
-    op.drop_column("clientes", "status")
+    pass

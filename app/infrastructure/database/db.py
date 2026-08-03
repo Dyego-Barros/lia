@@ -1,14 +1,18 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-engine = create_engine("postgresql://lash:lash@localhost:5432/lash")
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from app.config.config import DevelopmentConfig
+
+DATABASE_URL = DevelopmentConfig.SQLALCHEMY_DATABASE_URI
+async_engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+AsyncSessionLocal = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 class Database:
-    def get_session(self):
+    async def get_session(self):
         try:
-            db = SessionLocal()
-            yield db
-        except Exception as e:
-            print("Ocorreu um erro ao criar a sessão do banco de dados:", e)
-            db.close()
+            async with AsyncSessionLocal() as session:
+                yield session
+        except Exception:
+            raise
+
+get_session = Database().get_session
+            

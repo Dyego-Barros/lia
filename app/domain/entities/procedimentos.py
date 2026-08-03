@@ -1,4 +1,4 @@
-from pydantic import BaseModel, foeld_validator
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from app.domain.exceptions.domainException import DomainException
 
@@ -9,6 +9,9 @@ class Procedimento(BaseModel):
     descricao: Optional[str] = None
     preco: float
     duracao: int  # duração em minutos
+    indicacoes: Optional[str] = None
+    contraindicacoes: Optional[str] = None
+    cuidados: Optional[str] = None
 
     model_config = {
         "from_attributes": True,

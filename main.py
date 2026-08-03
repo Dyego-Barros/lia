@@ -1,11 +1,13 @@
 from fastapi import FastAPI
-from app.infrastructure.models.models import table_registry
-from app.infrastructure.database.db import engine
+from app.infrastructure.database.models.models import table_registry
 
 app = FastAPI()
+from app.api.routes import agendamentos_router, clientes_router, procedimentos_router, atendimento_router
 
-#Cria tabelas no banco de dados 
-table_registry.metadata.create_all(bind=engine)
+app.include_router(clientes_router)
+app.include_router(procedimentos_router)
+app.include_router(agendamentos_router)
+app.include_router(atendimento_router)
 
 @app.get("/")
 def read_root():

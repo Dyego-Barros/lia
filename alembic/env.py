@@ -1,6 +1,7 @@
 from logging.config import fileConfig
 from pathlib import Path
 import sys
+import os
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -8,7 +9,11 @@ from sqlalchemy import engine_from_config, pool
 config = context.config
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.infrastructure.models.models import table_registry
+database_url = os.getenv("ALEMBIC_DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
+
+from app.infrastructure.database.models.models import table_registry
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

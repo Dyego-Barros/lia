@@ -1,4 +1,4 @@
-from domainException import DomainException
+from .domainException import DomainException
 
 class AgendamentoNotFoundException(DomainException):
     """Exception raised when an agendamento is not found."""
@@ -18,4 +18,8 @@ class InvalidAgendamentoTimeException(DomainException):
 
 class AgendamentoConflictException(DomainException):
     """Exception raised when an agendamento conflicts with another agendamento."""
+    pass
+
+class InvalidAgendamentoDateTimeException(DomainException):
+    """Exception raised when an agendamento has an invalid date or time."""
     pass

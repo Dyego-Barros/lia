@@ -1,11 +1,11 @@
-from pydantic import BaseModel, EmailStr,field_validator
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from app.domain.exceptions.domainException import DomainException
 
 class Cliente(BaseModel):
     id: Optional[int] = None
     nome: str
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     status: Optional[bool] = True
     telefone: Optional[str] = None  
     
@@ -32,11 +32,12 @@ class Cliente(BaseModel):
         return email
     
         
-    def normalizar_telefone(self):
+    def normalizar_telefone(self,telefone: str):
         # Lógica para normalizar o telefone do cliente
-        if self.telefone:
+        if telefone:
             # Remove espaços, traços e parênteses
-            self.telefone = ''.join(filter(str.isdigit, self.telefone))
+            telefone = ''.join(filter(str.isdigit, telefone))
+        return telefone
             
     def ativar(self):
         self.status = True
