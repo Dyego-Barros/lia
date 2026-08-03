@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: lash 
+      POSTGRES_PASSWORD: lash
+      POSTGRES_DB: lash
+    ports: 
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      lash_network:
+        aliases:
+          - postgres
+  
+  pgadmin:
+    image: dpage/pgadmin4:7.7
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    networks:
+      lash_network:
+        aliases:
+          - pgadmin
+
+networks:
+  lash_network:
+volumes:
+  postgres_data:
