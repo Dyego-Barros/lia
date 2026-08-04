@@ -1,6 +1,6 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
-from app.api.routes.dependencies import cliente_repository, procedimento_repository, agendamento_repository
+from app.api.routes.dependencies import cliente_repository, procedimento_repository, agendamento_repository, tempo_trabalho_repository
 from app.api.schemas.atendimento import (
     CriarAgendamentoRequest, DisponibilidadeResponse, IdentificarClienteRequest,
     InformacoesProcedimentoResponse,
@@ -21,11 +21,12 @@ from app.application.dto.procedimento import ProcedimentoDto
 from app.infrastructure.repositories.repositorie_cliente import ClienteRepository
 from app.infrastructure.repositories.repositorie_procedimento import ProcedimentoRepository
 from app.infrastructure.repositories.repositorie_agendamento import AgendamentoRepository
+from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
 
 router = APIRouter(prefix="/atendimento", tags=["Atendimento do agente"])
 
-def atendimento(clientes, procedimentos, agendamentos):
-    return AtendimentoService(clientes, procedimentos, agendamentos)
+def atendimento(clientes, procedimentos, agendamentos, tempos_trabalho=None):
+    return AtendimentoService(clientes, procedimentos, agendamentos, tempos_trabalho)
 
 @router.get("/procedimentos", response_model=list[ProcedimentoDto])
 async def catalogo(busca: str | None = None, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository)):
@@ -44,10 +45,10 @@ async def identificar_cliente(payload: IdentificarClienteRequest, repository: Cl
     return await IdentificarCliente(ClienteService(repository)).execute(payload.telefone, payload.nome, payload.email)
 
 @router.get("/disponibilidade", response_model=DisponibilidadeResponse)
-async def disponibilidade(procedimento_id: int, data: date, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository)):
+async def disponibilidade(procedimento_id: int, data: date, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository), tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
     if data < date.today(): raise HTTPException(400, "A data não pode estar no passado.")
     try:
-        horarios = await atendimento(clientes, procedimentos, agendamentos).disponibilidade(procedimento_id, data)
+        horarios = await atendimento(clientes, procedimentos, agendamentos, tempos_trabalho).disponibilidade(procedimento_id, data)
         return {"procedimento_id": procedimento_id, "data": data, "horarios": horarios}
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 

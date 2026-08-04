@@ -7,7 +7,7 @@ class ClienteDto(BaseModel):
     nome: str
     email: str
     telefone: str
-    status: bool=True
+    status: Optional[bool] = True  # Default status is True (active)
 
     model_config = {
         "from_attributes": True,

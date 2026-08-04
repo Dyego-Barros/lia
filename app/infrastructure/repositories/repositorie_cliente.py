@@ -19,7 +19,7 @@ class ClienteRepository(ClienteInterface):
                 telefone=cliente.telefone
             )
             self.session.add(cliente_model)
-            await self.session.flush()
+            await self.session.commit()
             await self.session.refresh(cliente_model)
             return ClienteDto.model_validate(cliente_model)
         except Exception as e:
@@ -46,7 +46,8 @@ class ClienteRepository(ClienteInterface):
             cliente_update.nome = cliente.nome
             cliente_update.email = cliente.email
             cliente_update.telefone = cliente.telefone
-            await self.session.flush()
+            cliente_update.status = cliente.status
+            await self.session.commit()
             await self.session.refresh(cliente_update)
             return ClienteDto.model_validate(cliente_update)
         except Exception as e:
@@ -60,7 +61,7 @@ class ClienteRepository(ClienteInterface):
             if cliente is None:
                 raise ValueError(f"Cliente com ID {cliente_id} não encontrado.")
             await self.session.delete(cliente)
-            await self.session.flush()
+            await self.session.commit()
         except Exception as e:
             print("Ocorreu um erro ao deletar o cliente:", e)
             await self.session.rollback()
@@ -105,7 +106,7 @@ class ClienteRepository(ClienteInterface):
             if cliente is None:
                 raise ValueError(f"Cliente com ID {cliente_id} não encontrado.")
             cliente.status = True
-            await self.session.flush()
+            await self.session.commit()
         except Exception as e:
             print("Ocorreu um erro ao ativar o cliente:", e)
             await self.session.rollback()
@@ -117,7 +118,7 @@ class ClienteRepository(ClienteInterface):
             if cliente is None:
                 raise ValueError(f"Cliente com ID {cliente_id} não encontrado.")
             cliente.status = False
-            await self.session.flush()
+            await self.session.commit()
         except Exception as e:
             print("Ocorreu um erro ao desativar o cliente:", e)
             await self.session.rollback()

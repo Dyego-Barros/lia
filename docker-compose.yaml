@@ -37,14 +37,25 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://lash:lash@postgres:5432/lash
       ALEMBIC_DATABASE_URL: postgresql+psycopg2://lash:lash@postgres:5432/lash
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      PHONE_NUMBER_ID: ${PHONE_NUMBER_ID}
+      BUSINESS_ID: ${BUSINESS_ID}
+      ZAP_TOKEN: ${ZAP_TOKEN}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v20.0}
+      ULTRAMSG_INSTANCE_ID: ${ULTRAMSG_INSTANCE_ID}
+      ULTRAMSG_TOKEN: ${ULTRAMSG_TOKEN}
     ports:
       - "8000:8000"
+    volumes:
+      - ./:/app
     depends_on:
       postgres:
         condition: service_healthy
     command: >-
       sh -c "alembic upgrade head &&
-      uvicorn main:app --host 0.0.0.0 --port 8000"
+      uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app"
     networks: [lash_network]
 
 networks:

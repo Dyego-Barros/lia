@@ -11,7 +11,7 @@ class Agendamento(BaseModel):
     cliente_id: int
     procedimento_id: int
     data_hora: datetime  # Consider using datetime for better handling
-    status: StatusAgendamento = StatusAgendamento.PENDENTE.value  # Default status is "pendente"
+    status: Optional[str] = StatusAgendamento.PENDENTE.value  # Default status is "pendente"
 
     model_config = {
         "from_attributes": True,

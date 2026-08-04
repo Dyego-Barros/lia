@@ -12,6 +12,9 @@ RUN pip install \
     asyncpg \
     fastapi \
     httpx \
+    langchain-core \
+    langchain-openai \
+    langgraph \
     psycopg2-binary \
     sqlalchemy \
     uvicorn

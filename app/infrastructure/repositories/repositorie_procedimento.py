@@ -22,7 +22,7 @@ class ProcedimentoRepository(ProcedimentoInterface):
                 cuidados=procedimento.cuidados,
             )
             self.session.add(procedimento_model)
-            await self.session.flush()
+            await self.session.commit()
             await self.session.refresh(procedimento_model)
             return ProcedimentoDto.model_validate(procedimento_model)
         except Exception:
@@ -53,7 +53,7 @@ class ProcedimentoRepository(ProcedimentoInterface):
             procedimento_update.contraindicacoes = procedimento.contraindicacoes
             procedimento_update.cuidados = procedimento.cuidados
 
-            await self.session.flush()
+            await self.session.commit()
             await self.session.refresh(procedimento_update)
             return ProcedimentoDto.model_validate(procedimento_update)
         except Exception:
@@ -66,7 +66,7 @@ class ProcedimentoRepository(ProcedimentoInterface):
             if procedimento is None:
                 raise ValueError(f"Procedimento com ID {procedimento_id} não encontrado.")
             await self.session.delete(procedimento)
-            await self.session.flush()
+            await self.session.commit()
         except Exception:
             await self.session.rollback()
             raise

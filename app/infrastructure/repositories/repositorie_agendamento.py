@@ -17,7 +17,7 @@ class AgendamentoRepository(AgendamentoInterface):
                 status=agendamento.status
             )
             self.session.add(agendamento_model)
-            await self.session.flush()
+            await self.session.commit()
             await self.session.refresh(agendamento_model)
             return AgendamentoDto.model_validate(agendamento_model)
         except Exception as e:
@@ -43,7 +43,7 @@ class AgendamentoRepository(AgendamentoInterface):
             agendamento_update.procedimento_id = agendamento.procedimento_id
             agendamento_update.data_hora = agendamento.data_hora
             agendamento_update.status = agendamento.status
-            await self.session.flush()
+            await self.session.commit()
             await self.session.refresh(agendamento_update)
             return AgendamentoDto.model_validate(agendamento_update)
         except Exception as e:
@@ -56,7 +56,7 @@ class AgendamentoRepository(AgendamentoInterface):
             if agendamento is None:
                 raise ValueError(f"Agendamento com ID {agendamento_id} não encontrado.")
             await self.session.delete(agendamento)
-            await self.session.flush()
+            await self.session.commit()
         except Exception as e:
             print("Ocorreu um erro ao deletar o agendamento:", e)
             await self.session.rollback()
