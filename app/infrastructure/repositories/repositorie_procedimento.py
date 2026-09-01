@@ -16,6 +16,7 @@ class ProcedimentoRepository(ProcedimentoInterface):
                 nome=procedimento.nome,
                 descricao=procedimento.descricao,
                 preco=procedimento.preco,
+                custo_materiais=procedimento.custo_materiais,
                 duracao=procedimento.duracao,
                 indicacoes=procedimento.indicacoes,
                 contraindicacoes=procedimento.contraindicacoes,
@@ -48,6 +49,7 @@ class ProcedimentoRepository(ProcedimentoInterface):
             procedimento_update.nome = procedimento.nome
             procedimento_update.descricao = procedimento.descricao
             procedimento_update.preco = procedimento.preco
+            procedimento_update.custo_materiais = procedimento.custo_materiais
             procedimento_update.duracao = procedimento.duracao
             procedimento_update.indicacoes = procedimento.indicacoes
             procedimento_update.contraindicacoes = procedimento.contraindicacoes
@@ -90,6 +92,5 @@ class ProcedimentoRepository(ProcedimentoInterface):
         except Exception:
             await self.session.rollback()
             raise
-
 
 

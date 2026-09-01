@@ -5,6 +5,7 @@ class ProcedimentoCreate(BaseModel):
     nome: str
     descricao: Optional[str] = None
     preco: float
+    custo_materiais: float = 0
     duracao: int
     indicacoes: Optional[str] = None
     contraindicacoes: Optional[str] = None

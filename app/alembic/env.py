@@ -7,7 +7,9 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 config = context.config
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+# env.py fica em /app/app/alembic; para importar o pacote `app`,
+# o diretório raiz do projeto (/app) precisa estar no sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 database_url = os.getenv("ALEMBIC_DATABASE_URL")
 if database_url:

@@ -5,7 +5,7 @@ from typing import Optional
 class ClienteDto(BaseModel):
     id: Optional[int] = None
     nome: str
-    email: str
+    email: Optional[str] = None
     telefone: str
     status: Optional[bool] = True  # Default status is True (active)
 

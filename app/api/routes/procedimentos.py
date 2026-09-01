@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.routes.dependencies import procedimento_repository
+from app.api.routes.auth import get_current_user
 from app.api.schemas.procedimentos import ProcedimentoCreate
 from app.application.dto.procedimento import ProcedimentoDto
 from app.application.services.procedimento_service import ProcedimentoService
@@ -10,7 +11,7 @@ from app.application.use_cases.procedimentos.atualizar_procedimento import Atual
 from app.application.use_cases.procedimentos.excluir_procedimento import ExcluirProcedimento
 from app.infrastructure.repositories.repositorie_procedimento import ProcedimentoRepository
 
-router = APIRouter(prefix="/procedimentos", tags=["Procedimentos"])
+router = APIRouter(prefix="/procedimentos", tags=["Procedimentos"], dependencies=[Depends(get_current_user)])
 
 @router.post("/", response_model=ProcedimentoDto, status_code=status.HTTP_201_CREATED)
 async def criar(payload: ProcedimentoCreate, repository: ProcedimentoRepository = Depends(procedimento_repository)):

@@ -13,8 +13,12 @@ class AgendamentoRepository(AgendamentoInterface):
             agendamento_model = AgendamentoModel(
                 cliente_id=agendamento.cliente_id,
                 procedimento_id=agendamento.procedimento_id,
+                profissional_id=agendamento.profissional_id,
                 data_hora=agendamento.data_hora,
                 status=agendamento.status
+                ,valor_cobrado=agendamento.valor_cobrado
+                ,forma_pagamento=agendamento.forma_pagamento
+                ,status_pagamento=agendamento.status_pagamento
             )
             self.session.add(agendamento_model)
             await self.session.commit()
@@ -41,8 +45,12 @@ class AgendamentoRepository(AgendamentoInterface):
                 raise ValueError(f"Agendamento com ID {agendamento.id} não encontrado.")
             agendamento_update.cliente_id = agendamento.cliente_id
             agendamento_update.procedimento_id = agendamento.procedimento_id
+            agendamento_update.profissional_id = agendamento.profissional_id
             agendamento_update.data_hora = agendamento.data_hora
             agendamento_update.status = agendamento.status
+            agendamento_update.valor_cobrado = agendamento.valor_cobrado
+            agendamento_update.forma_pagamento = agendamento.forma_pagamento
+            agendamento_update.status_pagamento = agendamento.status_pagamento
             await self.session.commit()
             await self.session.refresh(agendamento_update)
             return AgendamentoDto.model_validate(agendamento_update)

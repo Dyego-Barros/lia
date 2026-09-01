@@ -19,8 +19,30 @@ class ClienteService:
         telefone_normalizado = Cliente(nome=nome or "Cliente", telefone=telefone, email=email).normalizar_telefone(telefone)
         cliente = await self.repository.get_cliente_by_telefone(telefone_normalizado)
         if cliente:
+            nome_atualizado = nome.strip() if nome and nome.strip() else cliente.nome
+            email_atualizado = email.strip() if email and email.strip() else cliente.email
+            precisa_atualizar = (
+                nome_atualizado != cliente.nome
+                or email_atualizado != cliente.email
+            )
+            if precisa_atualizar:
+                return await self.atualizar(ClienteDto(
+                    id=cliente.id,
+                    nome=nome_atualizado,
+                    email=email_atualizado,
+                    telefone=cliente.telefone,
+                    status=cliente.status,
+                ))
             return cliente
+        if not nome or not nome.strip() or not email or not email.strip():
+            raise ValueError(
+                "Cliente novo exige nome completo e e-mail antes do cadastro."
+            )
         return await self.criar(ClienteDto(nome=nome or "Cliente", email=email, telefone=telefone_normalizado))
+
+    async def buscar_por_telefone(self, telefone: str) -> ClienteDto | None:
+        telefone_normalizado = Cliente(nome="Cliente", telefone=telefone).normalizar_telefone(telefone)
+        return await self.repository.get_cliente_by_telefone(telefone_normalizado)
 
     async def listar(self) -> list[ClienteDto]:
         return await self.repository.list_clientes()

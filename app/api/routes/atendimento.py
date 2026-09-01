@@ -1,6 +1,7 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.routes.dependencies import cliente_repository, procedimento_repository, agendamento_repository, tempo_trabalho_repository
+from app.api.routes.auth import get_current_user
 from app.api.schemas.atendimento import (
     CriarAgendamentoRequest, DisponibilidadeResponse, IdentificarClienteRequest,
     InformacoesProcedimentoResponse,
@@ -23,7 +24,7 @@ from app.infrastructure.repositories.repositorie_procedimento import Procediment
 from app.infrastructure.repositories.repositorie_agendamento import AgendamentoRepository
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
 
-router = APIRouter(prefix="/atendimento", tags=["Atendimento do agente"])
+router = APIRouter(prefix="/atendimento", tags=["Atendimento do agente"], dependencies=[Depends(get_current_user)])
 
 def atendimento(clientes, procedimentos, agendamentos, tempos_trabalho=None):
     return AtendimentoService(clientes, procedimentos, agendamentos, tempos_trabalho)

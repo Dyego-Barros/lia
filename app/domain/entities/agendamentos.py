@@ -10,6 +10,7 @@ class Agendamento(BaseModel):
     id: Optional[int] = None
     cliente_id: int
     procedimento_id: int
+    profissional_id: Optional[int] = None
     data_hora: datetime  # Consider using datetime for better handling
     status: Optional[str] = StatusAgendamento.PENDENTE.value  # Default status is "pendente"
 
