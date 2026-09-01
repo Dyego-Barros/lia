@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f4f1;
+  --foreground: #111111;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f7f4f1;
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 1.0625rem;
+}
+
+.text-sm { font-size: 0.9375rem; }
+.text-xs { font-size: 0.8125rem; }
+
+.field {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  padding: 0.75rem 1rem;
+  color: #0f172a;
+  outline: none;
+}
+
+.field:focus { border-color: #7fa98b; }
+.primary-button { display: inline-flex; width: 100%; align-items: center; justify-content: center; gap: 0.5rem; border-radius: 0.75rem; background: #7fa98b; padding: 0.7rem 1rem; font-size: 0.875rem; font-weight: 600; color: #fff; transition: background 0.2s; }
+.primary-button:hover { background: #668a70; }
+.select-field { appearance: none; background-image: linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%); background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%; background-repeat: no-repeat; background-size: 6px 6px, 6px 6px; cursor: pointer; padding-right: 2.5rem; }
+
+.data-table-wrapper .dt-container { color: #475569; font-size: 0.875rem; }
+.data-table-wrapper .dt-search input,
+.data-table-wrapper .dt-length select { border: 1px solid #cbd5e1; border-radius: 0.5rem; background: #fff; padding: 0.45rem 0.65rem; color: #0f172a; }
+.data-table-wrapper table.dataTable thead th { border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.data-table-wrapper table.dataTable { border-collapse: separate !important; border-spacing: 0 0.45rem !important; margin-top: 0.35rem !important; }
+.data-table-wrapper table.dataTable tbody tr { background: #ffffff !important; box-shadow: 0 1px 3px rgb(15 23 42 / 0.06); }
+.data-table-wrapper table.dataTable tbody td { border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; padding: 0.9rem 0.65rem; color: #334155; vertical-align: middle; }
+.data-table-wrapper table.dataTable tbody td:first-child { border-left: 1px solid #e2e8f0; border-radius: 0.55rem 0 0 0.55rem; }
+.data-table-wrapper table.dataTable tbody td:last-child { border-right: 1px solid #e2e8f0; border-radius: 0 0.55rem 0.55rem 0; }
+.data-table-wrapper table.dataTable tbody tr:hover { background: #f8fafc !important; box-shadow: 0 2px 7px rgb(15 23 42 / 0.1); }
+.data-table-wrapper table.dataTable tbody td + td { border-left: 1px solid #f1f5f9; }
+.data-table-wrapper table.dataTable tbody td { min-height: 3.25rem; }
+.table-action { margin-right: 0.35rem; border-radius: 0.4rem; padding: 0.3rem 0.55rem; font-size: 0.75rem; font-weight: 600; }
+.table-edit { background: #eef7f0; color: #668a70; }
+.table-view { background: #f0f9ff; color: #0369a1; }
+.table-confirm { background: #ecfdf5; color: #047857; }
+.table-delete { background: #fff1f2; color: #be123c; }
+.status-pill { border-radius: 999px; padding: 0.25rem 0.55rem; font-size: 0.72rem; font-weight: 600; }
+.status-active, .status-confirmado, .status-concluido { background: #ecfdf5; color: #047857; }
+.status-inactive, .status-cancelado { background: #fff1f2; color: #be123c; }
+.status-pendente { background: #fffbeb; color: #b45309; }
+
+/* O conteúdo usa uma superfície clara; o menu lateral permanece escuro. */
+main .bg-zinc-900\/80,
+main .bg-zinc-900,
+main .bg-zinc-950\/70,
+main .bg-zinc-950\/60 {
+  background-color: #ffffff !important;
+}
+
+main .border-zinc-800,
+main .border-zinc-700 {
+  border-color: #e2e8f0 !important;
+}
+
+main .text-zinc-300,
+main .text-zinc-400 { color: #64748b !important; }
+main .text-zinc-500 { color: #94a3b8 !important; }
+main .text-white { color: #0f172a !important; }
+main button.bg-fuchsia-600,
+main button.bg-fuchsia-600:hover { color: #ffffff !important; }
+main .bg-zinc-950 { background-color: #f8fafc !important; }
+
+/* Paleta MAYA: taupe rosado, rosa queimado, sálvia e superfícies quentes. */
+.bg-fuchsia-50 { background-color: #f1f8f3 !important; }
+.bg-fuchsia-100 { background-color: #e2f0e6 !important; }
+.bg-fuchsia-600 { background-color: #9fc4aa !important; }
+.bg-fuchsia-700 { background-color: #7fa98b !important; }
+.bg-fuchsia-700:hover { background-color: #668a70 !important; }
+.border-fuchsia-200 { border-color: #c8ded0 !important; }
+.text-fuchsia-300 { color: #d6eadb !important; }
+.text-fuchsia-400 { color: #b7d4be !important; }
+.text-fuchsia-700 { color: #668a70 !important; }
+.text-fuchsia-800 { color: #4f7058 !important; }
+.text-fuchsia-900 { color: #3e5a46 !important; }
+.text-fuchsia-950 { color: #2d4032 !important; }
+.bg-fuchsia-600\/20 { background-color: rgb(127 169 139 / 0.28) !important; }
+.bg-slate-50 { background-color: #f7f4f1 !important; }
+.bg-slate-100 { background-color: #f0ebe7 !important; }
+.border-slate-100, .border-slate-200 { border-color: #e8e1dd !important; }
+.text-slate-900 { color: #111111 !important; }
+.text-slate-800 { color: #3d4447 !important; }
+.text-slate-700 { color: #111111 !important; }
+.text-slate-600 { color: #111111 !important; }
+.text-slate-500 { color: #111111 !important; }
+.text-slate-400 { color: #9aa0a1 !important; }
+.bg-zinc-950 { background-color: #302c2d !important; }
+.bg-zinc-900 { background-color: #3b3536 !important; }
+.hover\:bg-zinc-800:hover { background-color: #4a4142 !important; }
+.border-zinc-800, .border-zinc-700 { border-color: #514849 !important; }
+.text-zinc-300 { color: #e4dcda !important; }
+.text-zinc-400 { color: #c6b9b5 !important; }
+.text-white { color: #ffffff !important; }
+.status-active, .status-confirmado, .status-concluido, .table-confirm { background: #edf4ee; color: #66806d; }
+
+/* Textos sobre superfícies rosadas claras ficam pretos para melhorar a leitura. */
+.bg-fuchsia-50.text-fuchsia-700,
+.bg-fuchsia-50.text-fuchsia-800,
+.bg-fuchsia-100.text-fuchsia-950,
+.bg-fuchsia-600\/20.text-fuchsia-300 { color: #111111 !important; }
+.bg-fuchsia-50 .text-fuchsia-700,
+.bg-fuchsia-50 .text-fuchsia-800,
+.bg-fuchsia-100 .text-fuchsia-950 { color: #111111 !important; }
+
+/* O menu lateral mantém o contraste escuro original. */
+aside.bg-zinc-950, aside.bg-black { background-color: #000000 !important; }
+aside .text-zinc-300, aside .text-fuchsia-300, aside .text-fuchsia-400, aside .text-white { color: #ffffff !important; }
+aside .bg-fuchsia-600\/20 { background-color: rgb(255 255 255 / 0.15) !important; }
+button.bg-zinc-900 { background-color: #000000 !important; }
+main .bg-fuchsia-50 *, main .bg-fuchsia-100 *, main .bg-fuchsia-600\/20 * { color: #111111 !important; }
+main .bg-fuchsia-700, main .primary-button { background-color: #7fa98b !important; color: #ffffff !important; }
+main .bg-fuchsia-700:hover, main .primary-button:hover { background-color: #668a70 !important; }
