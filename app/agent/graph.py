@@ -14,11 +14,10 @@ MAX_RESPONSE_LENGTH = 4000
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMIT_MAX_MESSAGES = 30
 PRESENTATION_MESSAGE = (
-    """Oie 💕 
-Eu sou a Maya, assistente virtual da Mayssa. 
-Seja muito bem-vinda! ✨
-Estou aqui para te receber e te ajudar com informações sobre agenda, procedimentos, valores e cursos! 😊
-"""
+"Oie 💕\n"
+"Eu sou a Maya, assistente virtual da Mayssa.\n"
+"Seja muito bem-vinda! ✨\n"
+"Estou aqui para te ajudar com informações sobre agenda, procedimentos, valores e cursos! 😊"
 )
 
 
@@ -31,7 +30,11 @@ Você é a atendente virtual de studio de Lash.
 
 Regras:
 - Responda em português brasileiro, com clareza e cordialidade.
-- Nunca escreva outra saudação, apresentação ou frase de boas-vindas; responda apenas ao pedido do cliente.
+- A apresentação inicial é enviada automaticamente pelo sistema apenas na primeira interação; não repita essa apresentação nas respostas seguintes.
+- Nunca escreva código, exemplos de programação, comandos de terminal, JSON técnico ou blocos com crases. Se o cliente pedir programação, explique brevemente que você atende apenas assuntos do studio e ofereça ajuda com procedimentos, agenda ou valores.
+- Não inclua conteúdo que não responda ao pedido atual. Nunca acrescente exemplos, tutoriais ou textos de teste por iniciativa própria.
+- Responda somente sobre atendimento do studio: procedimentos, preços, duração, cuidados, agenda, disponibilidade, cadastro, agendamentos, confirmações, cancelamentos, reagendamentos e lista de espera.
+- Para qualquer assunto fora desse escopo, não tente responder nem invente informações; diga que pode ajudar apenas com os serviços e o atendimento do studio.
 - É extremamente proibido repetir a frase "Olá! Como posso ajudar você hoje ?"
 - Use todo o histórico da conversa. Não peça novamente informações que o cliente já forneceu.
 - Quando o cliente pedir disponibilidade sem informar a data, pergunte somente a data e confirme o procedimento e o período já entendidos.
@@ -122,6 +125,19 @@ def _confirmacao_valida(confirmacao: str | None) -> bool:
 def _parse_datetime(valor: str) -> datetime:
     data_hora = datetime.fromisoformat(valor.strip().replace("Z", "+00:00"))
     return data_hora.replace(tzinfo=None)
+
+
+def _sanitize_response(value: str) -> str:
+    """Remove código que o modelo possa ter anexado indevidamente à resposta."""
+    resposta = re.sub(r"```[\s\S]*?```", "", value).strip()
+    resposta = re.sub(r"`[^`\n]+`", "", resposta).strip()
+    code_start = re.search(
+        r"(?im)^\s*(?:def\s+\w+\s*\(|class\s+\w+\s*[:(]|(?:from|import)\s+\w+|(?:const|let|var)\s+\w+\s*=|function\s+\w+\s*\()",
+        resposta,
+    )
+    if code_start:
+        resposta = resposta[:code_start.start()].rstrip()
+    return resposta or "Posso ajudar com informações sobre procedimentos, valores e agenda."
 
 
 async def build_graph(atendimento, telefone_atual: str | None = None):
@@ -392,7 +408,8 @@ async def run_agent(message: str, telefone: str, atendimento) -> str:
     resposta = result["messages"][-1].content
     if isinstance(resposta, list):
         resposta = "".join(part.get("text", "") for part in resposta if isinstance(part, dict))
-    resposta = str(resposta).strip()[:MAX_RESPONSE_LENGTH]
+    resposta = _sanitize_response(str(resposta))
+    resposta = resposta[:MAX_RESPONSE_LENGTH]
     if telefone_normalizado not in _presentation_sent:
         _presentation_sent.add(telefone_normalizado)
         return f"{PRESENTATION_MESSAGE}\n\n{resposta}"[:MAX_RESPONSE_LENGTH]

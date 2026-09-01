@@ -5,7 +5,7 @@ limite de 16 MB por documento do MongoDB; o limite pode ser ajustado por env.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -47,6 +47,7 @@ def _view(item: dict[str, Any]) -> dict[str, Any]:
         "telefone": item["telefone"],
         "chat_id": item.get("chat_id"),
         "nome_contato": item.get("nome_contato"),
+        "foto_perfil": item.get("foto_perfil"),
         "status": item.get("status", "aberta"),
         "ultima_mensagem_em": item["ultima_mensagem_em"],
         "ultima_mensagem_recebida": item.get("ultima_mensagem_recebida"),
@@ -79,21 +80,49 @@ async def get_by_identity(integration_id: int, telefone: str) -> dict[str, Any] 
     return await collection.find_one({"integration_id": integration_id, "telefone": telefone})
 
 
-async def create_conversation(integration_id: int, telefone: str, nome_contato: str | None = None, chat_id: str | None = None) -> dict[str, Any]:
+async def get_active_human_conversation(telefone: str) -> dict[str, Any] | None:
+    digits = "".join(character for character in telefone if character.isdigit())
+    for conversation in await list_conversations():
+        conversation_digits = "".join(character for character in conversation.get("telefone", "") if character.isdigit())
+        if conversation_digits != digits or conversation.get("status") != "humano":
+            continue
+        human_until = conversation.get("humano_ate")
+        if human_until and human_until <= datetime.now():
+            await update_status(conversation["id"], "aberta")
+            continue
+        if not human_until:
+            await update_status(conversation["id"], "humano")
+        return conversation
+    return None
+
+
+async def activate_human_by_phone(telefone: str) -> bool:
+    digits = "".join(character for character in telefone if character.isdigit())
+    for conversation in await list_conversations():
+        conversation_digits = "".join(character for character in conversation.get("telefone", "") if character.isdigit())
+        if conversation_digits == digits:
+            await update_status(conversation["id"], "humano")
+            return True
+    return False
+
+
+async def create_conversation(integration_id: int, telefone: str, nome_contato: str | None = None, chat_id: str | None = None, foto_perfil: str | None = None) -> dict[str, Any]:
     now = datetime.now()
-    item = {"integration_id": integration_id, "telefone": telefone, "chat_id": chat_id, "nome_contato": nome_contato, "status": "aberta", "ultima_mensagem_em": now, "mensagens": []}
+    item = {"integration_id": integration_id, "telefone": telefone, "chat_id": chat_id, "nome_contato": nome_contato, "foto_perfil": foto_perfil, "status": "aberta", "ultima_mensagem_em": now, "mensagens": []}
     collection = await conversation_collection()
     result = await collection.insert_one(item)
     item["_id"] = result.inserted_id
     return item
 
 
-async def update_contact(conversation_id: str, *, nome_contato: str | None = None, chat_id: str | None = None) -> None:
+async def update_contact(conversation_id: str, *, nome_contato: str | None = None, chat_id: str | None = None, foto_perfil: str | None = None) -> None:
     updates = {}
     if nome_contato:
         updates["nome_contato"] = nome_contato
     if chat_id:
         updates["chat_id"] = chat_id
+    if foto_perfil:
+        updates["foto_perfil"] = foto_perfil
     if updates:
         collection = await conversation_collection()
         await collection.update_one({"_id": _object_id(conversation_id)}, {"$set": updates})
@@ -102,7 +131,12 @@ async def update_contact(conversation_id: str, *, nome_contato: str | None = Non
 async def append_message(conversation_id: str, *, direcao: str, conteudo: str, tipo: str = "text", external_id: str | None = None, enviado_em: datetime | None = None) -> dict[str, Any]:
     message = {"id": str(uuid4()), "direcao": direcao, "tipo": tipo, "conteudo": conteudo, "external_id": external_id, "enviado_em": enviado_em or datetime.now()}
     collection = await conversation_collection()
-    updates: dict[str, Any] = {"ultima_mensagem_em": message["enviado_em"], "status": "aberta"}
+    current = await collection.find_one({"_id": _object_id(conversation_id)}, {"status": 1})
+    if current is None:
+        raise KeyError("Conversa não encontrada")
+    updates: dict[str, Any] = {"ultima_mensagem_em": message["enviado_em"]}
+    if current.get("status") != "humano":
+        updates["status"] = "aberta"
     if direcao == "entrada":
         updates["ultima_mensagem_recebida"] = message
     result = await collection.find_one_and_update(
@@ -110,8 +144,6 @@ async def append_message(conversation_id: str, *, direcao: str, conteudo: str, t
         {"$push": {"mensagens": {"$each": [message], "$slice": -MONGODB_MAX_MESSAGES}}, "$set": updates},
         return_document=ReturnDocument.AFTER,
     )
-    if result is None:
-        raise KeyError("Conversa não encontrada")
     return _message_view(message, conversation_id)
 
 
@@ -124,7 +156,13 @@ async def list_messages(conversation_id: str) -> list[dict[str, Any]]:
 
 async def update_status(conversation_id: str, status: str) -> dict[str, Any] | None:
     collection = await conversation_collection()
-    await collection.update_one({"_id": _object_id(conversation_id)}, {"$set": {"status": status}})
+    changes: dict[str, Any] = {"status": status}
+    update: dict[str, Any] = {"$set": changes}
+    if status == "humano":
+        changes["humano_ate"] = datetime.now() + timedelta(hours=12)
+    else:
+        update["$unset"] = {"humano_ate": ""}
+    await collection.update_one({"_id": _object_id(conversation_id)}, update)
     return await get_conversation(conversation_id)
 
 

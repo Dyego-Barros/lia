@@ -1,4 +1,5 @@
 from datetime import date
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.routes.dependencies import cliente_repository, procedimento_repository, agendamento_repository, tempo_trabalho_repository
 from app.api.routes.auth import get_current_user
@@ -23,6 +24,11 @@ from app.infrastructure.repositories.repositorie_cliente import ClienteRepositor
 from app.infrastructure.repositories.repositorie_procedimento import ProcedimentoRepository
 from app.infrastructure.repositories.repositorie_agendamento import AgendamentoRepository
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
+from app.infrastructure.database.db import get_session
+from app.api.routes.integracoes import notify_appointment_confirmed
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/atendimento", tags=["Atendimento do agente"], dependencies=[Depends(get_current_user)])
 
@@ -62,8 +68,16 @@ async def criar_agendamento(payload: CriarAgendamentoRequest, clientes: ClienteR
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
 @router.post("/agendamentos/{agendamento_id}/confirmar", response_model=AgendamentoDto)
-async def confirmar_agendamento(agendamento_id: int, repository: AgendamentoRepository = Depends(agendamento_repository)):
-    try: return await ConfirmarAgendamento(AgendamentoService(repository)).execute(agendamento_id)
+async def confirmar_agendamento(agendamento_id: int, repository: AgendamentoRepository = Depends(agendamento_repository), clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), session: AsyncSession = Depends(get_session)):
+    try:
+        agendamento = await ConfirmarAgendamento(AgendamentoService(repository)).execute(agendamento_id)
+        try:
+            cliente = await clientes.get_cliente_by_id(agendamento.cliente_id)
+            procedimento = await procedimentos.buscar(agendamento.procedimento_id)
+            await notify_appointment_confirmed(session, cliente, procedimento, agendamento.data_hora)
+        except Exception:
+            logger.exception("Falha ao enviar notificação de confirmação do agendamento %s", agendamento_id)
+        return agendamento
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
 @router.post("/agendamentos/{agendamento_id}/cancelar", response_model=AgendamentoDto)

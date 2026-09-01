@@ -29,7 +29,7 @@ class AIIntegrationUpdate(AIIntegrationCreate):
 
 
 class ConversationStatusUpdate(BaseModel):
-    status: str = Field(pattern="^(aberta|pendente|encerrada)$")
+    status: str = Field(pattern="^(aberta|pendente|humano|encerrada)$")
 
 
 class ConversationMessageCreate(BaseModel):

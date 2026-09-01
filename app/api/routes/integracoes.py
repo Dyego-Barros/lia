@@ -1,9 +1,13 @@
 import ast
+import base64
+import html
 import hmac
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, select
@@ -32,6 +36,7 @@ from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrab
 
 router = APIRouter(prefix="/integracoes", tags=["Integrações"])
 webhook_router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+logger = logging.getLogger(__name__)
 
 
 def _whatsapp_view(item: WhatsAppIntegrationModel) -> dict[str, Any]:
@@ -156,7 +161,49 @@ async def listar_conversas(
         nome = clientes_por_telefone.get(conversa["telefone"])
         if nome:
             conversa["nome_contato"] = nome
+        if not conversa.get("foto_perfil"):
+            integration = await session.get(WhatsAppIntegrationModel, conversa.get("integration_id"))
+            if integration and integration.tipo == "openwa":
+                chat_id = conversa.get("chat_id") or f'{conversa["telefone"]}@c.us'
+                _, foto = await _openwa_contact_details(integration, chat_id)
+                if foto:
+                    conversa["foto_perfil"] = foto
+                    await mongo.update_contact(str(conversa["id"]), foto_perfil=foto)
+        if conversa.get("foto_perfil"):
+            conversa["foto_perfil"] = f"/api/integracoes/conversas/{conversa['id']}/foto"
     return conversas
+
+
+@router.get("/conversas/{conversation_id}/foto")
+async def foto_conversa(
+    conversation_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: UserModel = Depends(get_current_user),
+):
+    try:
+        conversa = await mongo.get_conversation(conversation_id)
+    except (KeyError, ValueError):
+        raise HTTPException(404, "Conversa não encontrada")
+    if not conversa:
+        raise HTTPException(404, "Conversa não encontrada")
+
+    foto = conversa.get("foto_perfil")
+    integration = await session.get(WhatsAppIntegrationModel, conversa.get("integration_id"))
+    if integration and integration.tipo == "openwa":
+        chat_id = conversa.get("chat_id") or f'{conversa["telefone"]}@c.us'
+        _, refreshed_photo = await _openwa_contact_details(integration, chat_id)
+        if refreshed_photo:
+            foto = refreshed_photo
+            await mongo.update_contact(conversation_id, foto_perfil=foto)
+    if not isinstance(foto, str) or not foto.startswith(("http://", "https://")):
+        raise HTTPException(404, "Foto não encontrada")
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        response = await client.get(foto, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://web.whatsapp.com/"})
+    if not response.is_success or not response.content:
+        raise HTTPException(404, "Foto não disponível")
+    media_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+    return Response(content=response.content, media_type=media_type)
 
 
 @router.get("/conversas/{conversation_id}/mensagens")
@@ -224,6 +271,193 @@ async def _send_through_integration(
                 f"Falha ao enviar mensagem pelo provedor {integration.tipo} "
                 f"({response.status_code}): {detail}"
             ) from error
+
+
+async def _openwa_contact_details(
+    integration: WhatsAppIntegrationModel,
+    contact_id: str,
+) -> tuple[str | None, str | None]:
+    """Busca nome e foto do contato no OpenWA sem interromper o webhook."""
+    try:
+        credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
+    except (ValueError, SyntaxError):
+        credentials = ast.literal_eval(decrypt_secret(integration.credenciais_encriptadas))
+    base_url = str(credentials.get("base_url") or credentials.get("url") or "").rstrip("/")
+    api_key = credentials.get("api_key") or credentials.get("key") or credentials.get("token")
+    session_id = credentials.get("session_id") or credentials.get("session")
+    if not base_url or not api_key or not session_id or not contact_id:
+        return None, None
+
+    contact_path = quote(contact_id, safe="")
+    headers = {"X-API-Key": api_key}
+    name = None
+    photo_url = None
+    def extract_photo(value: Any) -> str | None:
+        if isinstance(value, str):
+            value = html.unescape(value).strip().strip('"\'')
+            if value.startswith(("http://", "https://", "data:image/")):
+                return value
+            return None
+        if isinstance(value, dict):
+            for field in ("profilePicUrl", "profile_pic_url", "profilePictureUrl", "profilePictureURL", "profile_pic_URL", "profilePic", "profile_pic", "photo", "eurl", "imgUrl", "url"):
+                photo = extract_photo(value.get(field))
+                if photo:
+                    return photo
+            for nested in value.values():
+                photo = extract_photo(nested)
+                if photo:
+                    return photo
+        return None
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            response = await client.get(
+                f"{base_url}/api/sessions/{session_id}/contacts/{contact_path}",
+                headers=headers,
+            )
+            if response.is_success:
+                data = response.json()
+                if isinstance(data, dict):
+                    name = next(
+                        (
+                            str(data.get(field)).strip()
+                            for field in ("name", "pushname", "pushName", "displayName", "formattedName")
+                            if data.get(field)
+                        ),
+                        None,
+                    )
+                    photo_url = extract_photo(data)
+        except Exception:
+            logger.warning("Não foi possível consultar os dados do contato OpenWA %s", contact_id)
+
+        if not photo_url:
+            for photo_endpoint in ("profile-picture", "profile-pic"):
+                try:
+                    response = await client.get(
+                        f"{base_url}/api/sessions/{session_id}/contacts/{contact_path}/{photo_endpoint}",
+                        headers=headers,
+                    )
+                    if response.status_code == 404:
+                        continue
+                    break
+                except Exception:
+                    response = None
+                    logger.warning("Não foi possível consultar a foto do contato OpenWA %s", contact_id)
+            try:
+                if response is None:
+                    return name, None
+                if response.is_success and response.headers.get("content-type", "").startswith("image/") and response.content:
+                    media_type = response.headers["content-type"].split(";", 1)[0]
+                    photo_url = f"data:{media_type};base64,{base64.b64encode(response.content).decode()}"
+                elif response.is_success:
+                    photo_url = extract_photo(response.json())
+            except Exception:
+                logger.warning("Não foi possível consultar a foto do contato OpenWA %s", contact_id)
+        if not photo_url and contact_id.endswith("@lid"):
+            try:
+                response = await client.get(
+                    f"{base_url}/api/sessions/{session_id}/contacts/{contact_path}/phone",
+                    headers=headers,
+                )
+                if response.is_success:
+                    phone_data = response.json()
+                    phone = phone_data.get("phone") if isinstance(phone_data, dict) else phone_data
+                    if isinstance(phone, str) and phone.strip():
+                        resolved_name, resolved_photo = await _openwa_contact_details(
+                            integration,
+                            f"{phone.strip()}@c.us",
+                        )
+                        name = name or resolved_name
+                        photo_url = resolved_photo
+            except Exception:
+                logger.warning("Não foi possível resolver o identificador @lid do contato OpenWA %s", contact_id)
+        if photo_url and photo_url.startswith(base_url):
+            try:
+                response = await client.get(photo_url, headers=headers)
+                if response.is_success and response.content:
+                    media_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+                    if media_type.startswith("image/"):
+                        photo_url = f"data:{media_type};base64,{base64.b64encode(response.content).decode()}"
+            except Exception:
+                logger.warning("Não foi possível materializar a foto do contato OpenWA %s", contact_id)
+    return name, photo_url
+
+
+def _digits(value: str | None) -> str:
+    return "".join(character for character in (value or "") if character.isdigit())
+
+
+def _requests_human(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    requests = (
+        "atendimento humano", "atendente humano", "falar com uma pessoa",
+        "falar com alguém", "falar com alguem", "quero um humano",
+        "quero falar com", "pessoa real", "atendente", "humano",
+    )
+    return any(request in normalized for request in requests)
+
+
+async def notify_appointment_confirmed(
+    session: AsyncSession,
+    cliente: Any,
+    procedimento: Any,
+    data_hora: datetime,
+) -> bool:
+    """Envia e registra a confirmação na conversa WhatsApp do cliente."""
+    telefone = _digits(getattr(cliente, "telefone", None))
+    if not telefone:
+        logger.warning("Agendamento confirmado sem telefone para o cliente %s", getattr(cliente, "id", "desconhecido"))
+        return False
+
+    conversations = await mongo.list_conversations()
+    conversation = next(
+        (item for item in conversations if _digits(item.get("telefone")) == telefone),
+        None,
+    )
+    integration = await session.get(
+        WhatsAppIntegrationModel,
+        conversation["integration_id"],
+    ) if conversation else None
+
+    if not integration or not integration.ativo:
+        integration = (
+            await session.execute(
+                select(WhatsAppIntegrationModel)
+                .where(WhatsAppIntegrationModel.ativo.is_(True))
+                .order_by(WhatsAppIntegrationModel.prioridade, WhatsAppIntegrationModel.id)
+            )
+        ).scalars().first()
+    if not integration:
+        logger.warning("Nenhuma integração WhatsApp ativa para notificar o cliente %s", telefone)
+        return False
+
+    if not conversation:
+        conversation = await mongo.create_conversation(
+            integration.id,
+            telefone,
+            getattr(cliente, "nome", None),
+        )
+
+    nome = getattr(cliente, "nome", None) or "cliente"
+    nome_procedimento = getattr(procedimento, "nome", "procedimento")
+    mensagem = (
+        f"Olá, {nome}! Seu agendamento de {nome_procedimento} para "
+        f"{data_hora.strftime('%d/%m/%Y às %H:%M')} foi confirmado. "
+        "Esperamos por você!"
+    )
+    await _send_through_integration(
+        integration,
+        telefone,
+        mensagem,
+        chat_id=conversation.get("chat_id"),
+    )
+    await mongo.append_message(
+        str(conversation["_id"] if "_id" in conversation else conversation["id"]),
+        direcao="saida",
+        tipo="text",
+        conteudo=mensagem,
+    )
+    return True
 
 
 @router.post("/conversas/{conversation_id}/mensagens", status_code=status.HTTP_201_CREATED)
@@ -368,18 +602,38 @@ async def receber_webhook(
     if cliente:
         nome_contato = cliente.nome
     conversation = await mongo.get_by_identity(integration_id, telefone)
+    foto_perfil = conversation.get("foto_perfil") if conversation else None
+    if is_openwa and openwa_chat_id and (not conversation or not foto_perfil or not nome_contato):
+        openwa_name, openwa_photo = await _openwa_contact_details(integration, openwa_chat_id)
+        if not nome_contato:
+            nome_contato = openwa_name
+        foto_perfil = openwa_photo or foto_perfil
     if not conversation:
-        conversation = await mongo.create_conversation(integration_id, telefone, nome_contato, openwa_chat_id)
+        conversation = await mongo.create_conversation(integration_id, telefone, nome_contato, openwa_chat_id, foto_perfil)
     elif is_openwa:
         await mongo.update_contact(
             str(conversation["_id"]),
             nome_contato=nome_contato,
             chat_id=openwa_chat_id,
+            foto_perfil=foto_perfil,
         )
+    if conversation and conversation.get("status") == "humano":
+        human_until = conversation.get("humano_ate")
+        if not human_until:
+            await mongo.update_status(str(conversation["_id"]), "humano")
+        elif human_until <= datetime.now():
+            await mongo.update_status(str(conversation["_id"]), "aberta")
+            conversation["status"] = "aberta"
     try:
         await mongo.append_message(str(conversation["_id"]), external_id=external_id, direcao="entrada", tipo="text", conteudo=texto)
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
+
+    if conversation.get("status") == "humano" or _requests_human(texto):
+        if conversation.get("status") != "humano":
+            await mongo.update_status(str(conversation["_id"]), "humano")
+        logger.info("Atendimento humano solicitado para o telefone final %s", telefone[-4:])
+        return {"ok": True, "human_requested": True}
 
     if integration and integration.tipo in ("evolution", "openwa"):
         try:
