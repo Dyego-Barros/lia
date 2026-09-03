@@ -29,16 +29,16 @@ def _env_provider_config(name: str) -> dict[str, Any] | None:
         "ollama": {
             "api_key": os.getenv("OLLAMA_API_KEY"),
             "model": os.getenv("OLLAMA_MODEL", "gpt-oss:20b-cloud"),
-            "base_url": os.getenv("OLLAMA_BASE_URL", "https://ollama.com/api/chat"),
+            "base_url": os.getenv("OLLAMA_BASE_URL", "https://ollama.com/api"),
         },
         "groq": {
             "api_key": os.getenv("GROQ_API_KEY"),
-            "model": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
             "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         },
         "openai": {
             "api_key": os.getenv("OPENAI_API_KEY"),
-            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            "model": os.getenv("OPENAI_MODEL", "gpt-oss-20b"),
             "base_url": os.getenv("OPENAI_BASE_URL"),
         },
     }
@@ -58,7 +58,7 @@ def _build_models(tools: Sequence[Any], configurations: list[tuple[str, dict[str
     for name, config in configurations:
         kwargs = {
             "model": config["model"],
-            "temperature": 0,
+            "temperature": 0.5,
             "api_key": config["api_key"],
             "timeout": 30,
             "max_retries": 1,
