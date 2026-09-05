@@ -40,6 +40,7 @@ Regras:
 - Quando o cliente pedir disponibilidade sem informar a data, pergunte somente a data e confirme o procedimento e o período já entendidos.
 - Quando o cliente informar "manhã", considere horários antes de 12:00; para "tarde", horários entre 12:00 e 18:00; para "noite", horários após 18:00.
 - Ao perguntar por uma data, seja específico: aceite "hoje", "amanhã" e datas no formato dia/mês e converta para a data correta antes de consultar a ferramenta.
+- Para dias da semana, calcule sempre a próxima ocorrência futura usando a data atual informada no contexto. Por exemplo, se hoje for sábado 05/09/2026, "próxima segunda" significa 07/09/2026, não 12/09/2026.
 - Se o cliente disser apenas "quais horários", use o procedimento já identificado no histórico; só pergunte o procedimento se ele ainda não estiver definido.
 - Se o cliente pedir opções sem escolher uma data, use a ferramenta de próximos horários e mostre os dias e horários disponíveis.
 - Nunca peça uma data quando o cliente pedir explicitamente "quais dias e horários"; consulte os próximos dias úteis.
@@ -85,10 +86,41 @@ def _json(value):
 def _resolver_data(valor: str) -> date:
     hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     normalizado = valor.strip().casefold()
-    if normalizado  in {"hoje","Hoje","hj"}:
+    if normalizado in {"hoje", "hj"}:
         return hoje
     if normalizado in {"amanhã", "amanha"}:
         return hoje + timedelta(days=1)
+    dias_semana = {
+        "segunda": 0,
+        "segunda-feira": 0,
+        "segunda feira": 0,
+        "terça": 1,
+        "terca": 1,
+        "terça-feira": 1,
+        "terca-feira": 1,
+        "terça feira": 1,
+        "terca feira": 1,
+        "quarta": 2,
+        "quarta-feira": 2,
+        "quarta feira": 2,
+        "quinta": 3,
+        "quinta-feira": 3,
+        "quinta feira": 3,
+        "sexta": 4,
+        "sexta-feira": 4,
+        "sexta feira": 4,
+        "sábado": 5,
+        "sabado": 5,
+        "sábado-feira": 5,
+        "sabado-feira": 5,
+        "domingo": 6,
+    }
+    sem_prefixo = re.sub(r"^(na|no|em|nesta|neste|próxima|proxima)\s+", "", normalizado)
+    if sem_prefixo in dias_semana:
+        deslocamento = (dias_semana[sem_prefixo] - hoje.weekday()) % 7
+        if deslocamento == 0:
+            deslocamento = 7
+        return hoje + timedelta(days=deslocamento)
     if "/" in normalizado:
         dia, mes = normalizado.split("/")[:2]
         ano = hoje.year
@@ -166,11 +198,13 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
 
     @tool
     async def consultar_disponibilidade(procedimento_id: int, data: str, periodo: str | None = None) -> dict:
-        """Consulta horários livres. Aceita hoje, amanhã, dd/mm ou AAAA-MM-DD."""
-        horarios = await atendimento.disponibilidade(procedimento_id, _resolver_data(data))
+        """Consulta horários livres. Aceita hoje, amanhã, dias da semana, dd/mm ou AAAA-MM-DD."""
+        data_resolvida = _resolver_data(data)
+        horarios = await atendimento.disponibilidade(procedimento_id, data_resolvida)
         horarios = _filtrar_periodo(horarios, periodo)
         horarios_formatados = [horario.isoformat() for horario in horarios]
         return {
+            "data_consultada": data_resolvida.isoformat(),
             "encontrado": bool(horarios_formatados),
             "horarios": horarios_formatados,
         }
