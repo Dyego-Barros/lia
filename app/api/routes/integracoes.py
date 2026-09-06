@@ -549,6 +549,7 @@ async def receber_webhook(
     openwa_chat_id = None
     if is_openwa:
         openwa_candidates = [
+            data.get("chatId"),
             data.get("remoteJidAlt"),
             data.get("remoteJid"),
             data.get("from"),
@@ -561,15 +562,34 @@ async def receber_webhook(
     if (is_evolution and evolution_key.get("fromMe")) or (is_openwa and data.get("fromMe")):
         return {"ok": True, "ignored": True, "reason": "from_me"}
 
-    telefone = str(
-        evolution_key.get("remoteJid")
-        or evolution_key.get("remoteJidAlt")
-        or data.get("from")
-        or data.get("phone")
-        or data.get("sender")
-        or data.get("from")
-        or ""
-    ).split("@", 1)[0].split(":", 1)[0]
+    if is_openwa:
+        # @lid is the routing identity required by OpenWA for replies, but it
+        # is not the customer's phone number. Prefer the alternate phone JID
+        # for the CRM and keep openwa_chat_id untouched for sending.
+        telefone_candidatos = [
+            data.get("remoteJidAlt"),
+            data.get("phone"),
+            data.get("from"),
+            data.get("chatId"),
+            data.get("remoteJid"),
+        ]
+        telefone_origem = next(
+            (
+                value for value in telefone_candidatos
+                if isinstance(value, str) and "@lid" not in value.lower()
+            ),
+            openwa_chat_id or "",
+        )
+    else:
+        telefone_origem = (
+            evolution_key.get("remoteJid")
+            or evolution_key.get("remoteJidAlt")
+            or data.get("from")
+            or data.get("phone")
+            or data.get("sender")
+            or ""
+        )
+    telefone = str(telefone_origem).split("@", 1)[0].split(":", 1)[0]
     texto = str(
         evolution_message.get("conversation")
         or (evolution_message.get("extendedTextMessage") or {}).get("text")
