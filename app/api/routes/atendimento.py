@@ -75,7 +75,7 @@ async def confirmar_agendamento(agendamento_id: int, repository: AgendamentoRepo
         agendamento = await ConfirmarAgendamento(AgendamentoService(repository)).execute(agendamento_id)
         try:
             cliente = await clientes.get_cliente_by_id(agendamento.cliente_id)
-            procedimento = await procedimentos.buscar(agendamento.procedimento_id)
+            procedimento = await ProcedimentoService(procedimentos).buscar(agendamento.procedimento_id)
             await notify_appointment_confirmed(session, cliente, procedimento, agendamento.data_hora)
         except Exception:
             logger.exception("Falha ao enviar notificação de confirmação do agendamento %s", agendamento_id)
