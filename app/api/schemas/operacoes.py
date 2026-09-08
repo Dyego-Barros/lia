@@ -1,5 +1,5 @@
 from datetime import datetime, time
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class UserCreate(BaseModel):
@@ -22,6 +22,12 @@ class ScheduleCreate(BaseModel):
     weekday: int = Field(ge=0, le=6)
     inicio: time
     fim: time
+
+    @model_validator(mode="after")
+    def validar_intervalo(self):
+        if self.fim <= self.inicio:
+            raise ValueError("O fim do horário deve ser posterior ao início.")
+        return self
 
 
 class ProfessionalUpdate(BaseModel):
@@ -72,6 +78,9 @@ class PackageCreate(BaseModel):
     descricao: str | None = None
     preco: float = Field(ge=0)
     ativo: bool = True
+
+class PackageUpdate(PackageCreate):
+    pass
 
 
 class PackageItemCreate(BaseModel):

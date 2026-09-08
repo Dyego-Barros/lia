@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.models.models import BloqueioAgendaModel, TempoTrabalhoModel
@@ -21,13 +21,15 @@ class TempoTrabalhoRepository:
         )
         return [(item.data_inicio, item.data_fim) for item in result.scalars().all()]
 
-    async def listar_bloqueios_por_dia(self, dia: date) -> list[tuple[datetime, datetime]]:
+    async def listar_bloqueios_por_dia(self, dia: date, profissional_id: int | None = None) -> list[tuple[datetime, datetime]]:
         inicio = datetime.combine(dia, time.min)
         fim = inicio + timedelta(days=1)
-        result = await self.session.execute(
-            select(BloqueioAgendaModel)
+        statement = (select(BloqueioAgendaModel)
             .where(BloqueioAgendaModel.inicio < fim)
-            .where(BloqueioAgendaModel.fim > inicio)
-            .order_by(BloqueioAgendaModel.inicio)
-        )
+            .where(BloqueioAgendaModel.fim > inicio))
+        # Bloqueios sem profissional fecham a agenda inteira; os demais afetam
+        # somente a profissional informada.
+        if profissional_id is not None:
+            statement = statement.where(or_(BloqueioAgendaModel.profissional_id.is_(None), BloqueioAgendaModel.profissional_id == profissional_id))
+        result = await self.session.execute(statement.order_by(BloqueioAgendaModel.inicio))
         return [(item.inicio, item.fim) for item in result.scalars().all()]

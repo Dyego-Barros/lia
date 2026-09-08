@@ -15,6 +15,7 @@ class CriarAgendamentoRequest(BaseModel):
     nome: Optional[str] = None
     email: Optional[str] = None
     procedimento_id: int
+    profissional_id: int
     data_hora: datetime
 
 class ReagendarRequest(BaseModel):
@@ -23,6 +24,12 @@ class ReagendarRequest(BaseModel):
 class DisponibilidadeResponse(BaseModel):
     procedimento_id: int
     data: date
+    horarios: list[datetime]
+    opcoes: list["DisponibilidadeProfissional"] = []
+
+class DisponibilidadeProfissional(BaseModel):
+    profissional_id: int
+    profissional_nome: str
     horarios: list[datetime]
 
 class InformacoesProcedimentoResponse(BaseModel):

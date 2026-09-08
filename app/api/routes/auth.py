@@ -14,6 +14,14 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 bearer = HTTPBearer(auto_error=False)
 
 
+def _cookie_secure() -> bool:
+    """HTTPS é obrigatório no container de produção; HTTP local continua utilizável."""
+    environment = os.getenv("APP_ENV", "development").lower()
+    if environment not in {"development", "dev", "test"}:
+        return True
+    return os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     lia_session: str | None = Cookie(default=None),
@@ -45,12 +53,15 @@ async def login(payload: LoginRequest, http_response: Response, session: AsyncSe
         "lia_session",
         token,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        # Docker Compose injeta APP_ENV=production por padrão. Fora dele,
+        # o padrão é desenvolvimento e respeita COOKIE_SECURE=false local.
+        secure=_cookie_secure(),
         samesite="strict",
         max_age=8 * 60 * 60,
         path="/",
     )
-    return {"token_type": "bearer", "user": user_response}
+    # O JWT fica exclusivamente no cookie HttpOnly; nunca é devolvido ao JS.
+    return {"user": user_response}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

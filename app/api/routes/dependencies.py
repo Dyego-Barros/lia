@@ -5,6 +5,7 @@ from app.infrastructure.repositories.repositorie_cliente import ClienteRepositor
 from app.infrastructure.repositories.repositorie_procedimento import ProcedimentoRepository
 from app.infrastructure.repositories.repositorie_agendamento import AgendamentoRepository
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
+from app.infrastructure.repositories.repository_horario_profissional import HorarioProfissionalRepository
 
 def cliente_repository(session: AsyncSession = Depends(get_session)):
     return ClienteRepository(session)
@@ -17,3 +18,6 @@ def agendamento_repository(session: AsyncSession = Depends(get_session)):
 
 def tempo_trabalho_repository(session: AsyncSession = Depends(get_session)):
     return TempoTrabalhoRepository(session)
+
+def horario_profissional_repository(session: AsyncSession = Depends(get_session)):
+    return HorarioProfissionalRepository(session)

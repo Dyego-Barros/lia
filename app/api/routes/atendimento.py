@@ -52,19 +52,21 @@ async def identificar_cliente(payload: IdentificarClienteRequest, repository: Cl
     return await IdentificarCliente(ClienteService(repository)).execute(payload.telefone, payload.nome, payload.email)
 
 @router.get("/disponibilidade", response_model=DisponibilidadeResponse)
-async def disponibilidade(procedimento_id: int, data: date, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository), tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
+async def disponibilidade(procedimento_id: int, data: date, profissional_id: int | None = None, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository), tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
     if data < date.today(): raise HTTPException(400, "A data não pode estar no passado.")
     try:
-        horarios = await atendimento(clientes, procedimentos, agendamentos, tempos_trabalho).disponibilidade(procedimento_id, data)
-        return {"procedimento_id": procedimento_id, "data": data, "horarios": horarios}
+        fluxo = atendimento(clientes, procedimentos, agendamentos, tempos_trabalho)
+        opcoes = await fluxo.disponibilidade_por_profissional(procedimento_id, data, profissional_id)
+        horarios = sorted({horario for opcao in opcoes for horario in opcao["horarios"]})
+        return {"procedimento_id": procedimento_id, "data": data, "horarios": horarios, "opcoes": opcoes}
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 
 @router.post("/agendamentos", response_model=AgendamentoDto, status_code=201)
-async def criar_agendamento(payload: CriarAgendamentoRequest, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository)):
-    fluxo = atendimento(clientes, procedimentos, agendamentos)
+async def criar_agendamento(payload: CriarAgendamentoRequest, clientes: ClienteRepository = Depends(cliente_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), agendamentos: AgendamentoRepository = Depends(agendamento_repository), tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
+    fluxo = atendimento(clientes, procedimentos, agendamentos, tempos_trabalho)
     try:
         cliente = await fluxo.clientes.identificar_por_telefone(payload.telefone, payload.nome, payload.email)
-        return await fluxo.iniciar_agendamento(cliente, payload.procedimento_id, payload.data_hora)
+        return await fluxo.iniciar_agendamento(cliente, payload.procedimento_id, payload.data_hora, payload.profissional_id)
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
 @router.post("/agendamentos/{agendamento_id}/confirmar", response_model=AgendamentoDto)
@@ -86,6 +88,17 @@ async def cancelar_agendamento(agendamento_id: int, repository: AgendamentoRepos
     except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
 @router.post("/agendamentos/{agendamento_id}/reagendar", response_model=AgendamentoDto)
-async def reagendar_agendamento(agendamento_id: int, payload: ReagendarRequest, repository: AgendamentoRepository = Depends(agendamento_repository)):
-    try: return await ReagendarAgendamento(AgendamentoService(repository)).execute(agendamento_id, payload.data_hora)
-    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+async def reagendar_agendamento(agendamento_id: int, payload: ReagendarRequest, repository: AgendamentoRepository = Depends(agendamento_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
+    try:
+        agendamento = await AgendamentoService(repository).buscar(agendamento_id)
+        if not agendamento.profissional_id:
+            raise HTTPException(409, "O agendamento não possui profissional definida.")
+        fluxo = atendimento(None, procedimentos, repository, tempos_trabalho)
+        horarios = await fluxo.disponibilidade(agendamento.procedimento_id, payload.data_hora.date(), agendamento.profissional_id, agendamento_id)
+        if payload.data_hora not in horarios:
+            raise HTTPException(409, "A profissional não está disponível neste horário.")
+        return await ReagendarAgendamento(AgendamentoService(repository)).execute(agendamento_id, payload.data_hora)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

@@ -22,5 +22,5 @@ class AgendamentoInterface(ABC):
         pass
     
     @abstractmethod
-    async def get_agendamento_data_hora(self, data_hora):
+    async def get_agendamento_data_hora(self, data_hora, profissional_id=None):
         pass

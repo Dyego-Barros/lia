@@ -15,6 +15,7 @@ from app.application.use_cases.agendamentos.excluir_agendamento import ExcluirAg
 from app.infrastructure.repositories.repositorie_agendamento import AgendamentoRepository
 from app.infrastructure.repositories.repositorie_procedimento import ProcedimentoRepository
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
+from app.application.services.atendimento_service import AtendimentoService
 from app.domain.exceptions.agendamentos import AgendamentoConflictException
 
 router = APIRouter(prefix="/agendamentos", tags=["Agendamentos"], dependencies=[Depends(get_current_user)])
@@ -36,12 +37,17 @@ def dados_agendamento(payload: AgendamentoCreate, data_hora: datetime) -> dict:
 @router.post("/", response_model=AgendamentoDto, status_code=status.HTTP_201_CREATED)
 async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = Depends(agendamento_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), tempos: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
     try:
+        if payload.profissional_id is None:
+            raise HTTPException(400, "Selecione uma profissional para criar o agendamento.")
         data_hora = normalizar_data_hora(payload.data_hora)
         procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
         fim = data_hora + timedelta(minutes=procedimento.duracao)
-        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date())
+        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
         if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
             raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
+        disponiveis = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade(payload.procedimento_id, data_hora.date(), payload.profissional_id)
+        if data_hora not in disponiveis:
+            raise HTTPException(409, "A profissional não está disponível neste horário.")
         return await CadastrarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(**dados_agendamento(payload, data_hora)))
     except AgendamentoConflictException as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -60,12 +66,17 @@ async def buscar(agendamento_id: int, repository: AgendamentoRepository = Depend
 @router.put("/{agendamento_id}", response_model=AgendamentoDto)
 async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository: AgendamentoRepository = Depends(agendamento_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), tempos: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
     try:
+        if payload.profissional_id is None:
+            raise HTTPException(400, "Selecione uma profissional para atualizar o agendamento.")
         data_hora = normalizar_data_hora(payload.data_hora)
         procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
         fim = data_hora + timedelta(minutes=procedimento.duracao)
-        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date())
+        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
         if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
             raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
+        escala = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade_por_profissional(payload.procedimento_id, data_hora.date(), payload.profissional_id, agendamento_id)
+        if not any(data_hora in opcao["horarios"] for opcao in escala):
+            raise HTTPException(409, "A profissional não está disponível neste horário.")
         return await AtualizarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(id=agendamento_id, **dados_agendamento(payload, data_hora)))
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 

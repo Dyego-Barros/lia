@@ -45,6 +45,7 @@ Regras:
 - Nunca peça uma data quando o cliente pedir explicitamente "quais dias e horários"; consulte os próximos dias úteis.
 - Para pedidos que contenham "dias e horários disponíveis", chame diretamente consultar_opcoes_agendamento, mesmo sem uma data.
 - Use as ferramentas para consultar preços, duração, informações e horários.
+- Ao oferecer horários, informe somente o nome da profissional retornada pela ferramenta. IDs são dados internos: é proibido pedir, mencionar ou mostrar um ID de profissional ao cliente. Quando precisar do ID para uma ferramenta, obtenha-o internamente consultando a disponibilidade ou a ferramenta consultar_profissional. O cliente escolhe apenas pelo nome.
 - Nunca invente preços, disponibilidade, contraindicações ou resultados.
 - Não faça diagnóstico médico. Para dúvidas clínicas, encaminhe para uma profissional.
 - Antes de criar, cancelar ou reagendar, confirme explicitamente a ação com o cliente.
@@ -161,16 +162,29 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
         return _json(await atendimento.procedimentos.buscar(procedimento_id))
 
     @tool
-    async def consultar_disponibilidade(procedimento_id: int, data: str, periodo: str | None = None) -> dict:
-        """Consulta horários livres. Aceita apenas DD/MM/AAAA ou AAAA-MM-DD."""
+    async def consultar_profissional(nome: str) -> dict:
+        """Localiza internamente uma profissional ativa pelo nome antes de consultar ou criar um agendamento. Nunca peça ID ao cliente."""
+        profissionais = await atendimento.horarios_profissionais.buscar_profissionais_por_nome(nome)
+        return {
+            "encontrado": bool(profissionais),
+            "profissionais": [{"profissional_id": item.id, "profissional_nome": item.nome} for item in profissionais],
+        }
+
+    @tool
+    async def consultar_disponibilidade(procedimento_id: int, data: str, profissional_id: int | None = None, periodo: str | None = None) -> dict:
+        """Consulta horários livres por profissional. Aceita apenas DD/MM/AAAA ou AAAA-MM-DD."""
         data_resolvida = _resolver_data(data)
-        horarios = await atendimento.disponibilidade(procedimento_id, data_resolvida)
-        horarios = _filtrar_periodo(horarios, periodo)
-        horarios_formatados = [horario.isoformat() for horario in horarios]
+        opcoes = await atendimento.disponibilidade_por_profissional(procedimento_id, data_resolvida, profissional_id)
+        opcoes_formatadas = [{
+            "profissional_id": opcao["profissional_id"],
+            "profissional_nome": opcao["profissional_nome"],
+            "horarios": [horario.isoformat() for horario in _filtrar_periodo(opcao["horarios"], periodo)],
+        } for opcao in opcoes]
+        opcoes_formatadas = [opcao for opcao in opcoes_formatadas if opcao["horarios"]]
         return {
             "data_consultada": data_resolvida.isoformat(),
-            "encontrado": bool(horarios_formatados),
-            "horarios": horarios_formatados,
+            "encontrado": bool(opcoes_formatadas),
+            "opcoes": opcoes_formatadas,
         }
 
     @tool
@@ -183,15 +197,19 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
         quantidade_dias = max(1, min(quantidade_dias, 7))
         limite_busca = hoje + timedelta(days=30)
         while len(resultado) < quantidade_dias and dia <= limite_busca:
-            if dia.weekday() < 5:
-                horarios = await atendimento.disponibilidade(procedimento_id, dia)
-                horarios = _filtrar_periodo(horarios, periodo)
-                if horarios:
-                    resultado.append({
-                        "data": dia.isoformat(),
-                        "dia_semana": dias_semana[dia.weekday()],
-                        "horarios": [horario.isoformat() for horario in horarios],
-                    })
+            opcoes = await atendimento.disponibilidade_por_profissional(procedimento_id, dia)
+            opcoes_formatadas = [{
+                "profissional_id": opcao["profissional_id"],
+                "profissional_nome": opcao["profissional_nome"],
+                "horarios": [horario.isoformat() for horario in _filtrar_periodo(opcao["horarios"], periodo)],
+            } for opcao in opcoes]
+            opcoes_formatadas = [opcao for opcao in opcoes_formatadas if opcao["horarios"]]
+            if opcoes_formatadas:
+                resultado.append({
+                    "data": dia.isoformat(),
+                    "dia_semana": dias_semana[dia.weekday()],
+                    "opcoes": opcoes_formatadas,
+                })
             dia += timedelta(days=1)
         return {"encontrado": bool(resultado), "dias": resultado}
 
@@ -254,8 +272,8 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
             return {"encontrado": False, "precisa_cadastro": True, "mensagem": str(exc)}
 
     @tool
-    async def criar_agendamento(procedimento_id: int = 0, data_hora: str = "", nome: str | None = None, email: str | None = None, confirmacao: str | None = None) -> dict:
-        """Cria um agendamento pendente após os dados e a confirmação do cliente."""
+    async def criar_agendamento(procedimento_id: int = 0, profissional_id: int | None = None, profissional_nome: str | None = None, data_hora: str = "", nome: str | None = None, email: str | None = None, confirmacao: str | None = None) -> dict:
+        """Cria um agendamento pendente. profissional_id é interno; se o cliente informou apenas o nome, passe profissional_nome e o sistema resolve internamente."""
         telefone = telefone_atual
         if not telefone:
             return {"erro": "Telefone não informado."}
@@ -273,11 +291,21 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
             inicio = _parse_datetime(data_hora)
         except ValueError:
             return {"erro": "Data/hora inválida. Use o formato ISO 8601."}
+        if not profissional_id and profissional_nome:
+            candidatas = await atendimento.horarios_profissionais.buscar_profissionais_por_nome(profissional_nome)
+            if len(candidatas) == 1:
+                profissional_id = candidatas[0].id
+            elif len(candidatas) > 1:
+                return {"erro": "Há mais de uma profissional com esse nome. Consulte a disponibilidade para confirmar a profissional escolhida."}
+            else:
+                return {"erro": "Profissional não encontrada. Consulte a disponibilidade e confirme o nome escolhido."}
+        if not profissional_id:
+            return {"erro": "Consulte a disponibilidade e confirme a profissional escolhida pelo nome antes de agendar."}
         cliente = await atendimento.clientes.identificar_por_telefone(telefone, nome, email)
-        disponiveis = await atendimento.disponibilidade(procedimento_id, inicio.date())
+        disponiveis = await atendimento.disponibilidade(procedimento_id, inicio.date(), profissional_id)
         if inicio not in disponiveis:
             return {"erro": "Esse horário não está mais disponível. Consulte novos horários."}
-        agendamento = await atendimento.iniciar_agendamento(cliente, procedimento_id, inicio)
+        agendamento = await atendimento.iniciar_agendamento(cliente, procedimento_id, inicio, profissional_id)
         return _json(agendamento)
 
     @tool
@@ -312,7 +340,9 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
             inicio = _parse_datetime(data_hora)
         except ValueError:
             return {"erro": "Data/hora inválida. Use o formato ISO 8601."}
-        disponiveis = await atendimento.disponibilidade(autorizado.procedimento_id, inicio.date())
+        if not autorizado.profissional_id:
+            return {"erro": "Este agendamento antigo não tem profissional definida. Solicite atendimento humano para ajustá-lo."}
+        disponiveis = await atendimento.disponibilidade(autorizado.procedimento_id, inicio.date(), autorizado.profissional_id, agendamento_id)
         if inicio not in disponiveis:
             return {"erro": "Esse horário não está disponível. Consulte novos horários."}
         return _json(await atendimento.agendamentos.reagendar(agendamento_id, inicio))
@@ -335,6 +365,7 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
     tools = [
         buscar_procedimentos,
         consultar_procedimento,
+        consultar_profissional,
         consultar_disponibilidade,
         consultar_proximos_horarios,
         consultar_opcoes_agendamento,

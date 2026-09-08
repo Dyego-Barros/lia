@@ -78,9 +78,15 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao listar os agendamentos:", e)
             await self.session.rollback()
             raise e 
-    async def get_agendamento_data_hora(self, data_hora) -> list[AgendamentoDto]:
+    async def get_agendamento_data_hora(self, data_hora, profissional_id=None) -> list[AgendamentoDto]:
         try:
-            result = await self.session.execute(select(AgendamentoModel).where(AgendamentoModel.data_hora == data_hora))
+            statement = select(AgendamentoModel).where(
+                AgendamentoModel.data_hora == data_hora,
+                AgendamentoModel.status.notin_(("cancelado", "nao_compareceu")),
+            )
+            if profissional_id is not None:
+                statement = statement.where(AgendamentoModel.profissional_id == profissional_id)
+            result = await self.session.execute(statement)
             agendamentos = result.scalars().all()
             return [AgendamentoDto.model_validate(agendamento) for agendamento in agendamentos]
         except Exception as e:

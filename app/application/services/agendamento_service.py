@@ -12,8 +12,8 @@ class AgendamentoService:
 
     async def criar(self, agendamento: AgendamentoDto) -> AgendamentoDto:
         entity = Agendamento.model_validate(agendamento)
-        if await self.repository.get_agendamento_data_hora(entity.data_hora):
-            raise AgendamentoConflictException("Já existe um agendamento para esta data e hora.")
+        if await self.repository.get_agendamento_data_hora(entity.data_hora, entity.profissional_id):
+            raise AgendamentoConflictException("A profissional já possui um agendamento neste horário.")
         return await self.repository.create_agendamento(AgendamentoDto.model_validate(entity))
 
     async def buscar(self, agendamento_id: int) -> AgendamentoDto:

@@ -4,9 +4,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import get_current_user, require_admin
-from app.api.schemas.operacoes import BlockCreate, PackageCreate, PackageItemCreate, PaymentCreate, ProfessionalCreate, ProfessionalUpdate, ReviewCreate, ScheduleCreate, ScheduleUpdate, StockProductCreate, UserCreate, WaitlistCreate, WaitlistPromote, WaitlistStatusUpdate
+from app.api.schemas.operacoes import BlockCreate, PackageCreate, PackageItemCreate, PackageUpdate, PaymentCreate, ProfessionalCreate, ProfessionalUpdate, ReviewCreate, ScheduleCreate, ScheduleUpdate, StockProductCreate, UserCreate, WaitlistCreate, WaitlistPromote, WaitlistStatusUpdate
 from app.infrastructure.database.db import get_session
-from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProfissionalModel, UserModel
+from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProcedimentoModel, ProfissionalModel, UserModel
 from app.infrastructure.security.auth import hash_password
 
 router = APIRouter(prefix="/operacoes", tags=["Operações"], dependencies=[Depends(get_current_user)])
@@ -26,7 +26,7 @@ async def listar_usuarios(session: AsyncSession = Depends(get_session), _: UserM
 
 
 @router.post("/profissionais", status_code=status.HTTP_201_CREATED)
-async def criar_profissional(payload: ProfessionalCreate, session: AsyncSession = Depends(get_session)):
+async def criar_profissional(payload: ProfessionalCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
     item = ProfissionalModel(**payload.model_dump()); session.add(item); await session.commit(); await session.refresh(item); return item
 
 
@@ -65,20 +65,38 @@ async def remover_profissional(professional_id: int, session: AsyncSession = Dep
     return {"id": professional_id, "removido": True}
 
 
+async def validar_horario_profissional(session: AsyncSession, payload: ScheduleCreate, ignore_id: int | None = None):
+    profissional = await session.get(ProfissionalModel, payload.profissional_id)
+    if not profissional:
+        raise HTTPException(404, "Profissional não encontrado")
+    existentes = (await session.execute(select(HorarioProfissionalModel).where(
+        HorarioProfissionalModel.profissional_id == payload.profissional_id,
+        HorarioProfissionalModel.weekday == payload.weekday,
+    ))).scalars().all()
+    for existente in existentes:
+        if existente.id != ignore_id and payload.inicio < existente.fim and payload.fim > existente.inicio:
+            raise HTTPException(409, "Este horário se sobrepõe a outro período da profissional.")
+
+
 @router.post("/horarios", status_code=status.HTTP_201_CREATED)
-async def criar_horario(payload: ScheduleCreate, session: AsyncSession = Depends(get_session)):
+async def criar_horario(payload: ScheduleCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    await validar_horario_profissional(session, payload)
     item = HorarioProfissionalModel(**payload.model_dump()); session.add(item); await session.commit(); await session.refresh(item); return item
 
 
 @router.get("/horarios")
-async def listar_horarios(session: AsyncSession = Depends(get_session)):
-    return (await session.execute(select(HorarioProfissionalModel))).scalars().all()
+async def listar_horarios(profissional_id: int | None = None, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    statement = select(HorarioProfissionalModel)
+    if profissional_id is not None:
+        statement = statement.where(HorarioProfissionalModel.profissional_id == profissional_id)
+    return (await session.execute(statement.order_by(HorarioProfissionalModel.profissional_id, HorarioProfissionalModel.weekday, HorarioProfissionalModel.inicio))).scalars().all()
 
 
 @router.put("/horarios/{schedule_id}")
 async def atualizar_horario(schedule_id: int, payload: ScheduleUpdate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
     item = await session.get(HorarioProfissionalModel, schedule_id)
     if not item: raise HTTPException(404, "Horário não encontrado")
+    await validar_horario_profissional(session, payload, schedule_id)
     for key, value in payload.model_dump().items(): setattr(item, key, value)
     await session.commit(); await session.refresh(item)
     return item
@@ -92,7 +110,7 @@ async def remover_horario(schedule_id: int, session: AsyncSession = Depends(get_
 
 
 @router.post("/bloqueios", status_code=status.HTTP_201_CREATED)
-async def criar_bloqueio(payload: BlockCreate, session: AsyncSession = Depends(get_session)):
+async def criar_bloqueio(payload: BlockCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
     if payload.fim <= payload.inicio: raise HTTPException(400, "O fim deve ser posterior ao início")
     item = BloqueioAgendaModel(**payload.model_dump()); session.add(item); await session.commit(); await session.refresh(item); return item
 
@@ -156,24 +174,79 @@ async def listar_pagamentos(session: AsyncSession = Depends(get_session)):
     return (await session.execute(select(PagamentoModel).order_by(PagamentoModel.pago_em.desc()))).scalars().all()
 
 
+async def pacote_com_itens(session: AsyncSession, pacote: PacoteModel) -> dict:
+    itens = (await session.execute(
+        select(PacoteProcedimentoModel, ProcedimentoModel.nome)
+        .join(ProcedimentoModel, PacoteProcedimentoModel.procedimento_id == ProcedimentoModel.id)
+        .where(PacoteProcedimentoModel.pacote_id == pacote.id)
+        .order_by(ProcedimentoModel.nome)
+    )).all()
+    return {
+        "id": pacote.id, "nome": pacote.nome, "descricao": pacote.descricao,
+        "preco": pacote.preco, "ativo": pacote.ativo,
+        "procedimentos": [{"id": item.id, "procedimento_id": item.procedimento_id, "procedimento_nome": nome, "quantidade": item.quantidade} for item, nome in itens],
+    }
+
+
 @router.post("/pacotes", status_code=status.HTTP_201_CREATED)
-async def criar_pacote(payload: PackageCreate, session: AsyncSession = Depends(get_session)):
+async def criar_pacote(payload: PackageCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
     item = PacoteModel(**payload.model_dump()); session.add(item); await session.commit(); await session.refresh(item); return item
 
 
 @router.get("/pacotes")
-async def listar_pacotes(session: AsyncSession = Depends(get_session)):
-    return (await session.execute(select(PacoteModel))).scalars().all()
+async def listar_pacotes(session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    pacotes = (await session.execute(select(PacoteModel).order_by(PacoteModel.nome))).scalars().all()
+    return [await pacote_com_itens(session, pacote) for pacote in pacotes]
+
+
+@router.put("/pacotes/{pacote_id}")
+async def atualizar_pacote(pacote_id: int, payload: PackageUpdate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    item = await session.get(PacoteModel, pacote_id)
+    if not item: raise HTTPException(404, "Pacote não encontrado")
+    for key, value in payload.model_dump().items(): setattr(item, key, value)
+    await session.commit(); await session.refresh(item)
+    return await pacote_com_itens(session, item)
+
+
+@router.delete("/pacotes/{pacote_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remover_pacote(pacote_id: int, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    item = await session.get(PacoteModel, pacote_id)
+    if not item: raise HTTPException(404, "Pacote não encontrado")
+    await session.execute(delete(PacoteProcedimentoModel).where(PacoteProcedimentoModel.pacote_id == pacote_id))
+    await session.delete(item); await session.commit()
 
 
 @router.post("/pacotes/procedimentos", status_code=status.HTTP_201_CREATED)
-async def adicionar_procedimento_pacote(payload: PackageItemCreate, session: AsyncSession = Depends(get_session)):
+async def adicionar_procedimento_pacote(payload: PackageItemCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    if not await session.get(PacoteModel, payload.pacote_id): raise HTTPException(404, "Pacote não encontrado")
+    if not await session.get(ProcedimentoModel, payload.procedimento_id): raise HTTPException(404, "Procedimento não encontrado")
+    existente = (await session.execute(select(PacoteProcedimentoModel).where(PacoteProcedimentoModel.pacote_id == payload.pacote_id, PacoteProcedimentoModel.procedimento_id == payload.procedimento_id))).scalar_one_or_none()
+    if existente: raise HTTPException(409, "Este procedimento já foi adicionado ao pacote.")
     item = PacoteProcedimentoModel(**payload.model_dump()); session.add(item); await session.commit(); await session.refresh(item); return item
 
 
 @router.get("/pacotes/procedimentos")
-async def listar_procedimentos_pacotes(session: AsyncSession = Depends(get_session)):
+async def listar_procedimentos_pacotes(session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
     return (await session.execute(select(PacoteProcedimentoModel))).scalars().all()
+
+
+@router.put("/pacotes/procedimentos/{item_id}")
+async def atualizar_procedimento_pacote(item_id: int, payload: PackageItemCreate, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    item = await session.get(PacoteProcedimentoModel, item_id)
+    if not item: raise HTTPException(404, "Item do pacote não encontrado")
+    if not await session.get(PacoteModel, payload.pacote_id): raise HTTPException(404, "Pacote não encontrado")
+    if not await session.get(ProcedimentoModel, payload.procedimento_id): raise HTTPException(404, "Procedimento não encontrado")
+    duplicado = (await session.execute(select(PacoteProcedimentoModel).where(PacoteProcedimentoModel.pacote_id == payload.pacote_id, PacoteProcedimentoModel.procedimento_id == payload.procedimento_id, PacoteProcedimentoModel.id != item_id))).scalar_one_or_none()
+    if duplicado: raise HTTPException(409, "Este procedimento já foi adicionado ao pacote.")
+    for key, value in payload.model_dump().items(): setattr(item, key, value)
+    await session.commit(); await session.refresh(item); return item
+
+
+@router.delete("/pacotes/procedimentos/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remover_procedimento_pacote(item_id: int, session: AsyncSession = Depends(get_session), _: UserModel = Depends(require_admin)):
+    item = await session.get(PacoteProcedimentoModel, item_id)
+    if not item: raise HTTPException(404, "Item do pacote não encontrado")
+    await session.delete(item); await session.commit()
 
 
 @router.post("/avaliacoes", status_code=status.HTTP_201_CREATED)

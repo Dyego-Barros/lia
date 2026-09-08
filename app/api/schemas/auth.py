@@ -14,5 +14,4 @@ class UserResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    token_type: str = "bearer"
     user: UserResponse
