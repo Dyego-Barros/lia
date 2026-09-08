@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from app.domain.enums.status_agendamento import StatusAgendamento
 
 class AgendamentoCreate(BaseModel):
@@ -8,9 +8,15 @@ class AgendamentoCreate(BaseModel):
     profissional_id: int | None = None
     data_hora: datetime
     status: StatusAgendamento = StatusAgendamento.PENDENTE
-    valor_cobrado: float | None = None
+    valor_cobrado: float | None = Field(default=None, ge=0)
     forma_pagamento: str | None = None
     status_pagamento: str = "pendente"
+
+    @model_validator(mode="after")
+    def validar_pagamento_pago(self):
+        if self.status_pagamento == "pago" and (self.valor_cobrado is None or not self.forma_pagamento):
+            raise ValueError("Informe valor e forma de pagamento para registrar um pagamento como pago.")
+        return self
 
 class AgendamentoUpdate(AgendamentoCreate):
     id: int
