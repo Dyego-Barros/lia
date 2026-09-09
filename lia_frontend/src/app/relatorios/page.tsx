@@ -11,6 +11,7 @@ type AnnualVolume = { ano: number; meses: { mes: number; quantidade: number }[] 
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const chartColors = ["#c026d3", "#10b981", "#6366f1", "#f59e0b", "#0ea5e9", "#f43f5e", "#8b5cf6", "#14b8a6"];
 
 function isoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -65,6 +66,41 @@ function MonthlyVolume({ volume }: { volume: AnnualVolume }) {
   </section>;
 }
 
+function ProcedureComparison({ rows, names }: { rows: Row[]; names: Map<number, string> }) {
+  const maximum = Math.max(...rows.flatMap((row) => [row.faturamento, row.custos_materiais, Math.abs(row.lucro)]), 1);
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div><h2 className="text-lg font-semibold text-slate-900">Desempenho por procedimento</h2><p className="mt-1 text-sm text-slate-500">Comparação entre faturamento, materiais e lucro.</p></div>
+    {rows.length ? <div className="mt-6 max-h-96 space-y-6 overflow-y-auto pr-2">{rows.map((row) => <div key={row.procedimento_id}>
+      <h3 className="mb-3 truncate text-sm font-semibold text-slate-700">{names.get(row.procedimento_id) ?? `Procedimento #${row.procedimento_id}`}</h3>
+      {[
+        { label: "Faturamento", value: row.faturamento, color: "bg-indigo-500" },
+        { label: "Materiais", value: row.custos_materiais, color: "bg-fuchsia-600" },
+        { label: "Lucro", value: row.lucro, color: row.lucro < 0 ? "bg-rose-500" : "bg-emerald-500" },
+      ].map((item) => <div key={item.label} className="mb-2 grid grid-cols-[76px_1fr_96px] items-center gap-2 text-xs"><span className="text-slate-500">{item.label}</span><div className="h-2.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${item.color}`} style={{ width: `${(Math.abs(item.value) / maximum) * 100}%` }} /></div><strong className="text-right text-slate-700">{money.format(item.value)}</strong></div>)}
+    </div>)}</div> : <div className="mt-6 flex h-52 items-center justify-center rounded-xl bg-slate-50 px-6 text-center text-sm text-slate-400">Os dados aparecerão após a conclusão dos atendimentos.</div>}
+  </section>;
+}
+
+function RevenueShare({ rows, names }: { rows: Row[]; names: Map<number, string> }) {
+  const total = rows.reduce((sum, row) => sum + Math.max(row.faturamento, 0), 0);
+  let cursor = 0;
+  const segments = rows.map((row, index) => {
+    const start = cursor;
+    cursor += total ? (Math.max(row.faturamento, 0) / total) * 100 : 0;
+    return `${chartColors[index % chartColors.length]} ${start}% ${cursor}%`;
+  });
+  const background = total ? `conic-gradient(${segments.join(", ")})` : "conic-gradient(#e2e8f0 0 100%)";
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div><h2 className="text-lg font-semibold text-slate-900">Participação no faturamento</h2><p className="mt-1 text-sm text-slate-500">Quanto cada procedimento representa no total.</p></div>
+    <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
+      <div className="relative h-44 w-44 shrink-0 rounded-full" style={{ background }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner"><span className="text-xs uppercase tracking-wide text-slate-400">Total</span><strong className="mt-1 text-lg text-slate-900">{money.format(total)}</strong></div></div>
+      {rows.length ? <div className="max-h-52 w-full max-w-sm space-y-2 overflow-y-auto pr-1 text-sm">{rows.map((row, index) => <div key={row.procedimento_id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 p-2.5"><span className="flex min-w-0 items-center gap-2 text-slate-600"><i className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: chartColors[index % chartColors.length] }} /><span className="truncate">{names.get(row.procedimento_id) ?? `Procedimento #${row.procedimento_id}`}</span></span><strong className="shrink-0 text-slate-800">{total ? ((row.faturamento / total) * 100).toFixed(1) : "0.0"}%</strong></div>)}</div> : <p className="text-sm text-slate-400">Sem faturamento no período.</p>}
+    </div>
+  </section>;
+}
+
 export default function RelatoriosPage() {
   const period = useMemo(() => currentMonth(), []);
   const [inicio, setInicio] = useState(period.inicio);
@@ -113,7 +149,7 @@ export default function RelatoriosPage() {
     {report && <>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className="text-fuchsia-700" /></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold text-slate-900">Resultado por procedimento</h2><p className="mt-1 text-sm text-slate-500">Desempenho financeiro individual no período selecionado.</p>{report.por_procedimento.length ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{report.por_procedimento.map((row) => <article key={row.procedimento_id} className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5"><div className="flex items-start justify-between gap-3"><h3 className="font-semibold text-slate-900">{procedureNames.get(row.procedimento_id) ?? `Procedimento #${row.procedimento_id}`}</h3><span className="shrink-0 rounded-full bg-fuchsia-100 px-2.5 py-1 text-xs font-semibold text-fuchsia-700">{row.quantidade} atend.</span></div><div className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-200 pt-4 text-sm"><div><p className="text-xs text-slate-400">Faturamento</p><strong className="mt-1 block text-slate-800">{money.format(row.faturamento)}</strong></div><div><p className="text-xs text-slate-400">Materiais</p><strong className="mt-1 block text-slate-800">{money.format(row.custos_materiais)}</strong></div><div><p className="text-xs text-slate-400">Lucro</p><strong className={`mt-1 block ${row.lucro < 0 ? "text-rose-600" : "text-emerald-700"}`}>{money.format(row.lucro)}</strong></div></div></article>)}</div> : <p className="mt-5 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-400">Nenhum atendimento concluído no período.</p>}</section>
+      <div className="grid gap-4 xl:grid-cols-2"><ProcedureComparison rows={report.por_procedimento} names={procedureNames} /><RevenueShare rows={report.por_procedimento} names={procedureNames} /></div>
     </>}
   </div>;
 }
