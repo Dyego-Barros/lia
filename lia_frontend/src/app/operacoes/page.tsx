@@ -42,7 +42,7 @@ function OperationsContent() {
   return (
     <div className="space-y-6">
       <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">MAYA · Operações</p>
+        <p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · Operações</p>
         <h1 className="mt-2 text-2xl font-semibold text-slate-900">Gestão do negócio</h1>
         <p className="mt-2 text-sm text-slate-500">Use o submenu Operações para alternar entre as áreas administrativas.</p>
       </header>

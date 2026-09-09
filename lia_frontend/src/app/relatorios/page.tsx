@@ -203,20 +203,20 @@ export default function RelatoriosPage() {
 
   const procedureNames = useMemo(() => new Map(procedures.flatMap((procedure) => procedure.id ? [[procedure.id, procedure.nome] as const] : [])), [procedures]);
   const cards = report ? [
-    { label: "Faturamento", value: money.format(report.faturamento), icon: Receipt },
-    { label: "Custos de materiais", value: money.format(report.custos_materiais), icon: Coins },
-    { label: "Lucro estimado", value: money.format(report.lucro), icon: TrendingUp },
-    { label: "Atendimentos", value: report.atendimentos_realizados, icon: ChartNoAxesCombined },
+    { label: "Faturamento", value: money.format(report.faturamento), icon: Receipt, cardClass: "border-fuchsia-200 bg-gradient-to-br from-fuchsia-50 to-white", labelClass: "text-fuchsia-800", iconClass: "bg-fuchsia-100 text-fuchsia-700" },
+    { label: "Custos de materiais", value: money.format(report.custos_materiais), icon: Coins, cardClass: "border-sky-200 bg-gradient-to-br from-sky-50 to-white", labelClass: "text-sky-800", iconClass: "bg-sky-100 text-sky-700" },
+    { label: "Lucro estimado", value: money.format(report.lucro), icon: TrendingUp, cardClass: "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white", labelClass: "text-emerald-800", iconClass: "bg-emerald-100 text-emerald-700" },
+    { label: "Atendimentos", value: report.atendimentos_realizados, icon: ChartNoAxesCombined, cardClass: "border-amber-200 bg-gradient-to-br from-amber-50 to-white", labelClass: "text-amber-800", iconClass: "bg-amber-100 text-amber-700" },
   ] : [];
 
   return <div className="space-y-6">
-    <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">MAYA · Relatório financeiro</p><h1 className="mt-2 text-2xl font-semibold text-slate-900">Faturamento, custos e lucro</h1><p className="mt-2 text-sm text-slate-500">Os custos usam o custo médio de materiais configurado em cada procedimento.</p></header>
+    <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · Relatório financeiro</p><h1 className="mt-2 text-2xl font-semibold text-slate-900">Faturamento, custos e lucro</h1><p className="mt-2 text-sm text-slate-500">Os custos usam o custo médio de materiais configurado em cada procedimento.</p></header>
     <form onSubmit={load} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-end"><label className="flex-1 text-sm text-slate-600">Início<input required className="field mt-1" type="date" value={inicio} max={fim} onChange={(event) => setInicio(event.target.value)} /></label><label className="flex-1 text-sm text-slate-600">Fim<input required className="field mt-1" type="date" value={fim} min={inicio} onChange={(event) => setFim(event.target.value)} /></label><button className="primary-button md:w-auto">Atualizar relatório</button></form>
     {error && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
     {report && <>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className="text-fuchsia-700" /></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon, cardClass, labelClass, iconClass }) => <div key={label} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${labelClass}`}>{label}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>
-      <div className="grid items-start gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
+      <div className="grid gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
       <div className="grid gap-4 xl:grid-cols-2"><ProcedureComparison rows={report.por_procedimento} names={procedureNames} /><RevenueShare rows={report.por_procedimento} names={procedureNames} /></div>
     </>}
   </div>;

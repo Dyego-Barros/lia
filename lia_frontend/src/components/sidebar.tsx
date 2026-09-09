@@ -71,7 +71,7 @@ export function Sidebar() {
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 p-6 shadow-2xl transition-transform duration-200 lg:static lg:z-auto lg:translate-x-0 lg:shadow-none ${open ? "translate-x-0" : "-translate-x-full"}`}>
       <div className="mb-10 border-b border-white pb-6 text-center">
         <p className="text-sm font-semibold uppercase tracking-[0.3em] text-fuchsia-400">
-          MAYA Admin
+          Mayssa Admin
         </p>
         <h2 className="mt-2 text-2xl font-semibold capitalize text-white">dashboard</h2>
       </div>

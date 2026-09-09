@@ -32,5 +32,5 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   }, [pathname, router]);
   if (pathname === "/login") return <>{children}</>;
   if (!ready) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Validando sessão...</div>;
-  return <div className="flex min-h-screen"><Sidebar /><main className="flex min-h-screen min-w-0 flex-1 flex-col bg-slate-50 p-4 text-slate-900 md:p-8"><TopNavbar /><div className="flex-1">{children}</div><footer className="mt-10 border-t border-slate-200 py-6 text-center text-xs text-slate-400">© 2026 MAYA Admin. Todos os direitos reservados. Texto provisório para edição futura.</footer></main></div>;
+  return <div className="flex min-h-screen"><Sidebar /><main className="flex min-h-screen min-w-0 flex-1 flex-col bg-slate-50 p-4 text-slate-900 md:p-8"><TopNavbar /><div className="flex-1">{children}</div><footer className="mt-10 border-t border-slate-200 py-6 text-center text-xs text-slate-400">© 2026 Mayssa Admin. Todos os direitos reservados. Texto provisório para edição futura.</footer></main></div>;
 }

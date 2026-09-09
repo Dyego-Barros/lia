@@ -4,8 +4,8 @@ import "datatables.net-dt/css/dataTables.dataTables.css";
 import { AuthShell } from "@/components/auth-shell";
 
 export const metadata: Metadata = {
-  title: "MAYA Admin",
-  description: "Painel administrativo MAYA com IA, WhatsApp e agendamentos",
+  title: "Mayssa Admin",
+  description: "Painel administrativo Mayssa com IA, WhatsApp e agendamentos",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
