@@ -1,8 +1,6 @@
 .venv/
 /postgres_data/
-uv.lock
 PanGPA.log
 **/__pycache__/
-**/__init__.py
 *.py[cod]
 .env

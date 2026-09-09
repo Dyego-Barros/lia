@@ -4,14 +4,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
+  Boxes,
   CalendarDays,
   ChartNoAxesCombined,
+  ChevronDown,
+  CreditCard,
   LayoutDashboard,
+  ListTodo,
   Menu,
   MessageSquareText,
+  Package,
   Scissors,
   Settings,
   Users,
+  UsersRound,
   X,
 } from "lucide-react";
 
@@ -25,12 +31,21 @@ const items = [
   { href: "/conversas", label: "Conversas WhatsApp", icon: MessageSquareText },
   { href: "/procedimentos", label: "Procedimentos", icon: Scissors },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
-  { href: "/operacoes", label: "Operações", icon: Settings },
+];
+
+const operationItems = [
+  { href: "/operacoes?secao=equipe", label: "Equipe e agenda", icon: UsersRound },
+  { href: "/operacoes?secao=pacotes", label: "Pacotes", icon: Package },
+  { href: "/operacoes?secao=pagamentos", label: "Pagamentos", icon: CreditCard },
+  { href: "/operacoes?secao=estoque", label: "Estoque", icon: Boxes },
+  { href: "/operacoes?secao=espera", label: "Lista de espera", icon: ListTodo },
+  { href: "/operacoes?secao=usuarios", label: "Usuários", icon: Users },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(pathname === "/operacoes");
 
   return (
     <>
@@ -80,6 +95,34 @@ export function Sidebar() {
             </Link>
           );
         })}
+        <div>
+          <button
+            type="button"
+            aria-expanded={operationsOpen}
+            aria-controls="operations-submenu"
+            onClick={() => setOperationsOpen((current) => !current)}
+            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 ${pathname === "/operacoes" ? "bg-fuchsia-600/20" : ""}`}
+          >
+            <Settings size={18} />
+            <span className="flex-1 text-left">Operações</span>
+            <ChevronDown size={16} className={`transition-transform ${operationsOpen ? "rotate-180" : ""}`} />
+          </button>
+          {operationsOpen && (
+            <div id="operations-submenu" className="mt-1 space-y-1 border-l border-zinc-700 pl-3">
+              {operationItems.map(({ href, label, icon: Icon }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
+                >
+                  <Icon size={16} />
+                  {label}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
     </aside>
     </>

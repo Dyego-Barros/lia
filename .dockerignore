@@ -1,0 +1,7 @@
+.git
+lia_backend/.venv
+lia_backend/__pycache__
+lia_backend/postgres_data
+lia_backend/pgadmin_data
+lia_frontend/node_modules
+lia_frontend/.next

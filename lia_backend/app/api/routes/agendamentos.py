@@ -69,14 +69,24 @@ async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository:
         if payload.profissional_id is None:
             raise HTTPException(400, "Selecione uma profissional para atualizar o agendamento.")
         data_hora = normalizar_data_hora(payload.data_hora)
-        procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
-        fim = data_hora + timedelta(minutes=procedimento.duracao)
-        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
-        if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
-            raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
-        escala = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade_por_profissional(payload.procedimento_id, data_hora.date(), payload.profissional_id, agendamento_id)
-        if not any(data_hora in opcao["horarios"] for opcao in escala):
-            raise HTTPException(409, "A profissional não está disponível neste horário.")
+        existente = await AgendamentoService(repository).buscar(agendamento_id)
+        horario_foi_alterado = (
+            normalizar_data_hora(existente.data_hora) != data_hora
+            or existente.profissional_id != payload.profissional_id
+            or existente.procedimento_id != payload.procedimento_id
+        )
+
+        # Alterar status ou pagamento não muda a reserva e, portanto, não deve
+        # revalidar um horário que já passou ou uma escala alterada depois dela.
+        if horario_foi_alterado:
+            procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
+            fim = data_hora + timedelta(minutes=procedimento.duracao)
+            bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
+            if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
+                raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
+            escala = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade_por_profissional(payload.procedimento_id, data_hora.date(), payload.profissional_id, agendamento_id)
+            if not any(data_hora in opcao["horarios"] for opcao in escala):
+                raise HTTPException(409, "A profissional não está disponível neste horário.")
         return await AtualizarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(id=agendamento_id, **dados_agendamento(payload, data_hora)))
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 
