@@ -56,6 +56,8 @@ async def resumo(
     faturamento = sum(item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0) for item in realizados)
     custos_materiais = sum(material_costs.get(item.procedimento_id, 0) for item in realizados)
     por_procedimento = {}
+    totais_por_dia = {}
+    formas_pagamento = {}
     for item in realizados:
         entry = por_procedimento.setdefault(item.procedimento_id, {"procedimento_id": item.procedimento_id, "quantidade": 0, "faturamento": 0, "custos_materiais": 0, "lucro": 0})
         entry["quantidade"] += 1
@@ -64,5 +66,42 @@ async def resumo(
         entry["faturamento"] += valor
         entry["custos_materiais"] += custo
         entry["lucro"] += valor - custo
+        dia = item.data_hora.date().isoformat()
+        total_dia = totais_por_dia.setdefault(dia, {"faturamento": 0, "lucro": 0})
+        total_dia["faturamento"] += valor
+        total_dia["lucro"] += valor - custo
+        if item.status_pagamento == "pago" and item.forma_pagamento:
+            formas_pagamento[item.forma_pagamento] = formas_pagamento.get(item.forma_pagamento, 0) + 1
+
+    por_status = {}
+    for item in appointments:
+        por_status[item.status] = por_status.get(item.status, 0) + 1
+
+    por_dia = []
+    dia_atual = inicio
+    while dia_atual <= fim:
+        valores = totais_por_dia.get(dia_atual.isoformat(), {"faturamento": 0, "lucro": 0})
+        por_dia.append({"data": dia_atual, **valores})
+        dia_atual += timedelta(days=1)
+
     clientes_do_dia = len({item.cliente_id for item in appointments if item.status != "cancelado"})
-    return {"inicio": inicio, "fim": fim, "atendimentos_realizados": len(realizados), "clientes_do_dia": clientes_do_dia, "agendamentos": len(appointments), "faturamento": faturamento, "custos_materiais": custos_materiais, "lucro": faturamento - custos_materiais, "por_procedimento": list(por_procedimento.values())}
+    return {
+        "inicio": inicio,
+        "fim": fim,
+        "atendimentos_realizados": len(realizados),
+        "clientes_do_dia": clientes_do_dia,
+        "agendamentos": len(appointments),
+        "faturamento": faturamento,
+        "custos_materiais": custos_materiais,
+        "lucro": faturamento - custos_materiais,
+        "por_procedimento": list(por_procedimento.values()),
+        "por_dia": por_dia,
+        "formas_pagamento": [
+            {"forma": forma, "quantidade": quantidade}
+            for forma, quantidade in formas_pagamento.items()
+        ],
+        "por_status": [
+            {"status": nome_status, "quantidade": quantidade}
+            for nome_status, quantidade in por_status.items()
+        ],
+    }

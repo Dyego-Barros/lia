@@ -5,13 +5,19 @@ import { ChartNoAxesCombined, Coins, Receipt, TrendingUp } from "lucide-react";
 import { apiGet } from "@/lib/api";
 
 type Row = { procedimento_id: number; quantidade: number; faturamento: number; custos_materiais: number; lucro: number };
-type Report = { inicio: string; fim: string; atendimentos_realizados: number; clientes_do_dia: number; agendamentos: number; faturamento: number; custos_materiais: number; lucro: number; por_procedimento: Row[] };
+type DailyPoint = { data: string; faturamento: number; lucro: number };
+type PaymentMethod = { forma: string; quantidade: number };
+type StatusTotal = { status: string; quantidade: number };
+type Report = { inicio: string; fim: string; atendimentos_realizados: number; clientes_do_dia: number; agendamentos: number; faturamento: number; custos_materiais: number; lucro: number; por_procedimento: Row[]; por_dia: DailyPoint[]; formas_pagamento: PaymentMethod[]; por_status: StatusTotal[] };
 type Procedure = { id?: number; nome: string };
 type AnnualVolume = { ano: number; meses: { mes: number; quantidade: number }[] };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const chartColors = ["#c026d3", "#10b981", "#6366f1", "#f59e0b", "#0ea5e9", "#f43f5e", "#8b5cf6", "#14b8a6"];
+const paymentLabels: Record<string, string> = { pix: "PIX", dinheiro: "Dinheiro", credito: "Cartão de crédito", debito: "Cartão de débito", misto: "Misto", parceria: "Parceria", cortesia: "Cortesia" };
+const statusLabels: Record<string, string> = { pendente: "Pendente", confirmado: "Confirmado", cancelado: "Cancelado", concluido: "Concluído", nao_compareceu: "Não compareceu" };
+const statusColors: Record<string, string> = { pendente: "#f59e0b", confirmado: "#6366f1", cancelado: "#f43f5e", concluido: "#10b981", nao_compareceu: "#64748b" };
 
 function isoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -101,6 +107,58 @@ function RevenueShare({ rows, names }: { rows: Row[]; names: Map<number, string>
   </section>;
 }
 
+function DailyFinancialTrend({ data }: { data: DailyPoint[] }) {
+  const width = 760;
+  const height = 250;
+  const left = 58;
+  const right = 18;
+  const top = 18;
+  const bottom = 34;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+  const maximum = Math.max(...data.flatMap((item) => [item.faturamento, item.lucro]), 1);
+  const x = (index: number) => left + (index / Math.max(data.length - 1, 1)) * chartWidth;
+  const y = (value: number) => top + chartHeight - (Math.max(value, 0) / maximum) * chartHeight;
+  const points = (field: "faturamento" | "lucro") => data.map((item, index) => `${x(index)},${y(item[field])}`).join(" ");
+  const labels = data.length ? [data[0], data[Math.floor((data.length - 1) / 2)], data[data.length - 1]] : [];
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Evolução financeira diária</h2><p className="mt-1 text-sm text-slate-500">Faturamento e lucro ao longo do período selecionado.</p></div><div className="flex gap-4 text-xs text-slate-500"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Faturamento</span><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Lucro</span></div></div>
+    <div className="mt-4 overflow-x-auto"><svg role="img" aria-label="Evolução diária de faturamento e lucro" viewBox={`0 0 ${width} ${height}`} className="min-w-[680px]">
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => { const position = top + chartHeight - ratio * chartHeight; return <g key={ratio}><line x1={left} x2={width - right} y1={position} y2={position} stroke="#e2e8f0" strokeWidth="1" /><text x={left - 8} y={position + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{money.format(maximum * ratio).replace(",00", "")}</text></g>; })}
+      <polyline points={points("faturamento")} fill="none" stroke="#6366f1" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      <polyline points={points("lucro")} fill="none" stroke="#10b981" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      {labels.map((item, index) => <text key={`${item.data}-${index}`} x={x(index === 0 ? 0 : index === 1 ? Math.floor((data.length - 1) / 2) : data.length - 1)} y={height - 8} textAnchor={index === 0 ? "start" : index === 2 ? "end" : "middle"} fontSize="11" fill="#64748b">{item.data.slice(8, 10)}/{item.data.slice(5, 7)}</text>)}
+    </svg></div>
+  </section>;
+}
+
+function PaymentMethodsChart({ items }: { items: PaymentMethod[] }) {
+  const total = items.reduce((sum, item) => sum + item.quantidade, 0);
+  let cursor = 0;
+  const segments = items.map((item, index) => {
+    const start = cursor;
+    cursor += total ? (item.quantidade / total) * 100 : 0;
+    return `${chartColors[index % chartColors.length]} ${start}% ${cursor}%`;
+  });
+  const background = total ? `conic-gradient(${segments.join(", ")})` : "conic-gradient(#e2e8f0 0 100%)";
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div><h2 className="text-lg font-semibold text-slate-900">Formas de pagamento</h2><p className="mt-1 text-sm text-slate-500">Distribuição dos pagamentos confirmados.</p></div>
+    <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center"><div className="relative h-40 w-40 shrink-0 rounded-full" style={{ background }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white shadow-inner"><strong className="text-2xl text-slate-900">{total}</strong><span className="text-xs text-slate-400">pagamentos</span></div></div>{items.length ? <div className="w-full max-w-sm space-y-2 text-sm">{items.map((item, index) => <div key={item.forma} className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5"><span className="flex items-center gap-2 text-slate-600"><i className="h-3 w-3 rounded-full" style={{ backgroundColor: chartColors[index % chartColors.length] }} />{paymentLabels[item.forma] ?? item.forma}</span><strong className="text-slate-800">{item.quantidade}</strong></div>)}</div> : <p className="text-sm text-slate-400">Nenhum pagamento confirmado.</p>}</div>
+  </section>;
+}
+
+function AppointmentStatusChart({ items }: { items: StatusTotal[] }) {
+  const maximum = Math.max(...items.map((item) => item.quantidade), 1);
+  const total = items.reduce((sum, item) => sum + item.quantidade, 0);
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div><h2 className="text-lg font-semibold text-slate-900">Status dos atendimentos</h2><p className="mt-1 text-sm text-slate-500">Situação dos {total} agendamentos no período.</p></div>
+    {items.length ? <div className="mt-6 space-y-4">{items.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-sm"><span className="text-slate-600">{statusLabels[item.status] ?? item.status}</span><strong className="text-slate-800">{item.quantidade}</strong></div><div className="h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${(item.quantidade / maximum) * 100}%`, backgroundColor: statusColors[item.status] ?? "#64748b" }} /></div></div>)}</div> : <div className="mt-6 flex h-40 items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400">Nenhum agendamento no período.</div>}
+  </section>;
+}
+
 export default function RelatoriosPage() {
   const period = useMemo(() => currentMonth(), []);
   const [inicio, setInicio] = useState(period.inicio);
@@ -149,6 +207,7 @@ export default function RelatoriosPage() {
     {report && <>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className="text-fuchsia-700" /></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>
+      <div className="grid gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
       <div className="grid gap-4 xl:grid-cols-2"><ProcedureComparison rows={report.por_procedimento} names={procedureNames} /><RevenueShare rows={report.por_procedimento} names={procedureNames} /></div>
     </>}
   </div>;
