@@ -153,12 +153,18 @@ function PaymentMethodsChart({ items }: { items: PaymentMethod[] }) {
 }
 
 function AppointmentStatusChart({ items }: { items: StatusTotal[] }) {
-  const maximum = Math.max(...items.map((item) => item.quantidade), 1);
   const total = items.reduce((sum, item) => sum + item.quantidade, 0);
+  let cursor = 0;
+  const segments = items.map((item) => {
+    const start = cursor;
+    cursor += total ? (item.quantidade / total) * 100 : 0;
+    return `${statusColors[item.status] ?? "#64748b"} ${start}% ${cursor}%`;
+  });
+  const background = total ? `conic-gradient(${segments.join(", ")})` : "conic-gradient(#e2e8f0 0 100%)";
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div><h2 className="text-lg font-semibold text-slate-900">Status dos atendimentos</h2><p className="mt-1 text-sm text-slate-500">Situação dos {total} agendamentos no período.</p></div>
-    {items.length ? <div className="mt-6 space-y-4">{items.map((item) => <div key={item.status}><div className="mb-1.5 flex justify-between text-sm"><span className="text-slate-600">{statusLabels[item.status] ?? item.status}</span><strong className="text-slate-800">{item.quantidade}</strong></div><div className="h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${(item.quantidade / maximum) * 100}%`, backgroundColor: statusColors[item.status] ?? "#64748b" }} /></div></div>)}</div> : <div className="mt-6 flex h-40 items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400">Nenhum agendamento no período.</div>}
+    {items.length ? <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center"><div className="relative h-40 w-40 shrink-0 rounded-full" style={{ background }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner"><strong className="text-2xl text-slate-900">{total}</strong><span className="text-xs text-slate-400">agendamentos</span></div></div><div className="w-full max-w-sm space-y-2 text-sm">{items.map((item) => <div key={item.status} className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5"><span className="flex items-center gap-2 text-slate-600"><i className="h-3 w-3 rounded-full" style={{ backgroundColor: statusColors[item.status] ?? "#64748b" }} />{statusLabels[item.status] ?? item.status}</span><strong className="text-slate-800">{item.quantidade}</strong></div>)}</div></div> : <div className="mt-6 flex h-40 items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400">Nenhum agendamento no período.</div>}
   </section>;
 }
 
@@ -210,7 +216,7 @@ export default function RelatoriosPage() {
     {report && <>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-slate-500">{label}</p><Icon size={18} className="text-fuchsia-700" /></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>
-      <div className="grid gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
+      <div className="grid items-start gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
       <div className="grid gap-4 xl:grid-cols-2"><ProcedureComparison rows={report.por_procedimento} names={procedureNames} /><RevenueShare rows={report.por_procedimento} names={procedureNames} /></div>
     </>}
   </div>;
