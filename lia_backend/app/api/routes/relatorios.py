@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import get_current_user
@@ -8,6 +8,34 @@ from app.infrastructure.database.db import get_session
 from app.infrastructure.database.models.models import AgendamentoModel, ProcedimentoModel
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios"], dependencies=[Depends(get_current_user)])
+
+
+@router.get("/volume-anual")
+async def volume_anual(
+    ano: int = Query(..., ge=2000, le=2100),
+    session: AsyncSession = Depends(get_session),
+):
+    inicio = datetime(ano, 1, 1)
+    fim = datetime(ano + 1, 1, 1)
+    mes = func.extract("month", AgendamentoModel.data_hora)
+    resultado = await session.execute(
+        select(mes, func.count(AgendamentoModel.id))
+        .where(
+            AgendamentoModel.data_hora >= inicio,
+            AgendamentoModel.data_hora < fim,
+            AgendamentoModel.status == "concluido",
+        )
+        .group_by(mes)
+        .order_by(mes)
+    )
+    quantidades = {int(numero_mes): quantidade for numero_mes, quantidade in resultado.all()}
+    return {
+        "ano": ano,
+        "meses": [
+            {"mes": numero_mes, "quantidade": quantidades.get(numero_mes, 0)}
+            for numero_mes in range(1, 13)
+        ],
+    }
 
 
 @router.get("/resumo")
