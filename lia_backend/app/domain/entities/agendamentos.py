@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationInfo, field_validator
 from typing import Optional
 from datetime import datetime
 from app.domain.enums.status_agendamento import StatusAgendamento
@@ -13,6 +13,9 @@ class Agendamento(BaseModel):
     profissional_id: Optional[int] = None
     data_hora: datetime  # Consider using datetime for better handling
     status: Optional[str] = StatusAgendamento.PENDENTE.value  # Default status is "pendente"
+    valor_cobrado: Optional[float] = None
+    forma_pagamento: Optional[str] = None
+    status_pagamento: str = "pendente"
 
     model_config = {
         "from_attributes": True,
@@ -30,8 +33,9 @@ class Agendamento(BaseModel):
         
     @field_validator("data_hora")
     @classmethod
-    def validar_data_hora(cls, data_hora):
-        if data_hora < datetime.now():
+    def validar_data_hora(cls, data_hora, info: ValidationInfo):
+        permitir_passado = isinstance(info.context, dict) and info.context.get("permitir_data_passada", False)
+        if not permitir_passado and data_hora < datetime.now():
             raise InvalidAgendamentoDateTimeException("A data e hora do agendamento não podem ser no passado.")
         return data_hora
     
