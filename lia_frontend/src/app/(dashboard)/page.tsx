@@ -5,7 +5,7 @@ import { Activity, CircleDollarSign, MessageSquareText, Users } from "lucide-rea
 import { apiGet } from "@/lib/api";
 import { ContactAvatar } from "@/components/contact-avatar";
 
-type DailyReport = { atendimentos_realizados: number; clientes_do_dia: number; faturamento: number };
+type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number };
 type Conversation = { id: string; telefone: string; nome_contato: string | null; foto_perfil?: string | null; ultima_mensagem_recebida?: { conteudo: string; enviado_em: string } | null };
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -27,7 +27,7 @@ export default function DashboardPage() {
   }, []);
 
   const cards = [
-    { title: "Procedimentos do dia", value: report?.atendimentos_realizados ?? 0, hint: "realizados hoje", icon: Activity },
+    { title: "Procedimentos do dia", value: report?.agendamentos ?? 0, hint: "agendados hoje", icon: Activity },
     { title: "Clientes do dia", value: report?.clientes_do_dia ?? 0, hint: "com atendimento hoje", icon: Users },
     { title: "Total ganho no dia", value: report ? money.format(report.faturamento) : money.format(0), hint: "faturamento de hoje", icon: CircleDollarSign },
   ];
