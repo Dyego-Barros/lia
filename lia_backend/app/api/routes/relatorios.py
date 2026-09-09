@@ -71,7 +71,9 @@ async def resumo(
         total_dia["faturamento"] += valor
         total_dia["lucro"] += valor - custo
         if item.status_pagamento == "pago" and item.forma_pagamento:
-            formas_pagamento[item.forma_pagamento] = formas_pagamento.get(item.forma_pagamento, 0) + 1
+            pagamento = formas_pagamento.setdefault(item.forma_pagamento, {"quantidade": 0, "valor": 0})
+            pagamento["quantidade"] += 1
+            pagamento["valor"] += valor
 
     por_status = {}
     for item in appointments:
@@ -97,8 +99,8 @@ async def resumo(
         "por_procedimento": list(por_procedimento.values()),
         "por_dia": por_dia,
         "formas_pagamento": [
-            {"forma": forma, "quantidade": quantidade}
-            for forma, quantidade in formas_pagamento.items()
+            {"forma": forma, **totais}
+            for forma, totais in formas_pagamento.items()
         ],
         "por_status": [
             {"status": nome_status, "quantidade": quantidade}

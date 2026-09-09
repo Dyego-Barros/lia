@@ -6,7 +6,7 @@ import { apiGet } from "@/lib/api";
 
 type Row = { procedimento_id: number; quantidade: number; faturamento: number; custos_materiais: number; lucro: number };
 type DailyPoint = { data: string; faturamento: number; lucro: number };
-type PaymentMethod = { forma: string; quantidade: number };
+type PaymentMethod = { forma: string; quantidade: number; valor: number };
 type StatusTotal = { status: string; quantidade: number };
 type Report = { inicio: string; fim: string; atendimentos_realizados: number; clientes_do_dia: number; agendamentos: number; faturamento: number; custos_materiais: number; lucro: number; por_procedimento: Row[]; por_dia: DailyPoint[]; formas_pagamento: PaymentMethod[]; por_status: StatusTotal[] };
 type Procedure = { id?: number; nome: string };
@@ -135,6 +135,8 @@ function DailyFinancialTrend({ data }: { data: DailyPoint[] }) {
 
 function PaymentMethodsChart({ items }: { items: PaymentMethod[] }) {
   const total = items.reduce((sum, item) => sum + item.quantidade, 0);
+  const totalValue = items.reduce((sum, item) => sum + item.valor, 0);
+  const maximumValue = Math.max(...items.map((item) => item.valor), 1);
   let cursor = 0;
   const segments = items.map((item, index) => {
     const start = cursor;
@@ -145,7 +147,8 @@ function PaymentMethodsChart({ items }: { items: PaymentMethod[] }) {
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div><h2 className="text-lg font-semibold text-slate-900">Formas de pagamento</h2><p className="mt-1 text-sm text-slate-500">Distribuição dos pagamentos confirmados.</p></div>
-    <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center"><div className="relative h-40 w-40 shrink-0 rounded-full" style={{ background }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white shadow-inner"><strong className="text-2xl text-slate-900">{total}</strong><span className="text-xs text-slate-400">pagamentos</span></div></div>{items.length ? <div className="w-full max-w-sm space-y-2 text-sm">{items.map((item, index) => <div key={item.forma} className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5"><span className="flex items-center gap-2 text-slate-600"><i className="h-3 w-3 rounded-full" style={{ backgroundColor: chartColors[index % chartColors.length] }} />{paymentLabels[item.forma] ?? item.forma}</span><strong className="text-slate-800">{item.quantidade}</strong></div>)}</div> : <p className="text-sm text-slate-400">Nenhum pagamento confirmado.</p>}</div>
+    <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center"><div className="relative h-40 w-40 shrink-0 rounded-full" style={{ background }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner"><strong className="text-xl text-slate-900">{money.format(totalValue)}</strong><span className="text-xs text-slate-400">{total} pagamentos</span></div></div>{items.length ? <div className="w-full max-w-sm space-y-2 text-sm">{items.map((item, index) => <div key={item.forma} className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5"><span className="flex items-center gap-2 text-slate-600"><i className="h-3 w-3 rounded-full" style={{ backgroundColor: chartColors[index % chartColors.length] }} />{paymentLabels[item.forma] ?? item.forma}</span><strong className="text-slate-800">{item.quantidade}</strong></div>)}</div> : <p className="text-sm text-slate-400">Nenhum pagamento confirmado.</p>}</div>
+    {items.length > 0 && <div className="mt-6 border-t border-slate-100 pt-5"><h3 className="mb-4 text-sm font-semibold text-slate-700">Valor arrecadado por forma</h3><div className="space-y-3">{items.map((item, index) => <div key={`valor-${item.forma}`}><div className="mb-1.5 flex items-center justify-between gap-3 text-xs"><span className="text-slate-500">{paymentLabels[item.forma] ?? item.forma}</span><strong className="text-slate-800">{money.format(item.valor)}</strong></div><div className="h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${(item.valor / maximumValue) * 100}%`, backgroundColor: chartColors[index % chartColors.length] }} /></div></div>)}</div></div>}
   </section>;
 }
 
