@@ -1,5 +1,6 @@
 .venv/
 /postgres_data/
+/docker-compose.yaml
 PanGPA.log
 **/__pycache__/
 *.py[cod]
