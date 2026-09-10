@@ -88,6 +88,38 @@ function ProcedureComparison({ rows, names }: { rows: Row[]; names: Map<number, 
   </section>;
 }
 
+function MaterialConsumptionByProcedure({ rows, names }: { rows: Row[]; names: Map<number, string> }) {
+  const consumption = [...rows]
+    .filter((row) => row.custos_materiais > 0)
+    .sort((first, second) => second.custos_materiais - first.custos_materiais);
+  const maximum = Math.max(...consumption.map((row) => row.custos_materiais), 1);
+
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
+    <div>
+      <h2 className="text-lg font-semibold text-slate-900">Consumo de materiais por procedimento</h2>
+      <p className="mt-1 text-sm text-slate-500">Procedimentos ordenados pelo maior valor consumido em materiais no período.</p>
+    </div>
+    {consumption.length ? <div className="mt-6 overflow-x-auto pb-1">
+      <div className="flex h-72 min-w-max items-end gap-4 border-b border-slate-200 px-3" role="img" aria-label="Gráfico de colunas do valor consumido em materiais por procedimento">
+        {consumption.map((row) => {
+          const procedureName = names.get(row.procedimento_id) ?? `Procedimento #${row.procedimento_id}`;
+          return <div key={row.procedimento_id} className="flex h-full w-28 shrink-0 flex-col items-center justify-end gap-2">
+            <strong className="text-xs text-slate-700">{money.format(row.custos_materiais)}</strong>
+            <div className="flex h-44 w-full items-end justify-center">
+              <div
+                className="w-14 rounded-t-xl bg-gradient-to-t from-fuchsia-700 to-fuchsia-400 shadow-sm transition-[height]"
+                style={{ height: `${Math.max((row.custos_materiais / maximum) * 100, 4)}%` }}
+                title={`${procedureName}: ${money.format(row.custos_materiais)}`}
+              />
+            </div>
+            <span className="flex h-12 items-start justify-center overflow-hidden pb-2 text-center text-xs font-medium leading-4 text-slate-600" title={procedureName}>{procedureName}</span>
+          </div>;
+        })}
+      </div>
+    </div> : <div className="mt-6 flex h-52 items-center justify-center rounded-xl bg-slate-50 px-6 text-center text-sm text-slate-400">Nenhum consumo de materiais registrado no período.</div>}
+  </section>;
+}
+
 function RevenueShare({ rows, names }: { rows: Row[]; names: Map<number, string> }) {
   const total = rows.reduce((sum, row) => sum + Math.max(row.faturamento, 0), 0);
   let cursor = 0;
@@ -216,6 +248,7 @@ export default function RelatoriosPage() {
     {report && <>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon, cardClass, labelClass, iconClass }) => <div key={label} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${labelClass}`}>{label}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>
+      <div className="grid gap-4 xl:grid-cols-2"><MaterialConsumptionByProcedure rows={report.por_procedimento} names={procedureNames} /></div>
       <div className="grid gap-4 xl:grid-cols-2"><DailyFinancialTrend data={report.por_dia} /><PaymentMethodsChart items={report.formas_pagamento} /><AppointmentStatusChart items={report.por_status} /></div>
       <div className="grid gap-4 xl:grid-cols-2"><ProcedureComparison rows={report.por_procedimento} names={procedureNames} /><RevenueShare rows={report.por_procedimento} names={procedureNames} /></div>
     </>}
