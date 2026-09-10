@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from app.api.routes.dependencies import agendamento_repository, procedimento_repository, tempo_trabalho_repository
 from app.api.routes.auth import get_current_user
 from app.api.schemas.agendamentos import AgendamentoCreate
@@ -15,6 +16,7 @@ from app.infrastructure.repositories.repositorie_procedimento import Procediment
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
 from app.application.services.atendimento_service import AtendimentoService
 from app.domain.exceptions.agendamentos import AgendamentoConflictException
+from app.infrastructure.database.models.models import ConsumoMaterialModel, EstoqueProdutoModel, ProcedimentoMaterialModel
 
 router = APIRouter(prefix="/agendamentos", tags=["Agendamentos"], dependencies=[Depends(get_current_user)])
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
@@ -31,6 +33,24 @@ def dados_agendamento(payload: AgendamentoCreate, data_hora: datetime) -> dict:
     dados = payload.model_dump()
     dados["data_hora"] = data_hora
     return dados
+
+
+async def registrar_consumo_ao_concluir(repository: AgendamentoRepository, agendamento_id: int, procedimento_id: int) -> None:
+    session = repository.session
+    if (await session.execute(select(ConsumoMaterialModel.id).where(ConsumoMaterialModel.agendamento_id == agendamento_id).limit(1))).scalar_one_or_none():
+        return
+    vinculos = (await session.execute(select(ProcedimentoMaterialModel).where(ProcedimentoMaterialModel.procedimento_id == procedimento_id))).scalars().all()
+    produtos = {}
+    for vinculo in vinculos:
+        produto = await session.get(EstoqueProdutoModel, vinculo.produto_id, with_for_update=True)
+        if not produto or produto.quantidade < vinculo.quantidade:
+            nome = produto.nome if produto else f"#{vinculo.produto_id}"
+            raise HTTPException(409, f"Estoque insuficiente para concluir: {nome}.")
+        produtos[vinculo.produto_id] = produto
+    for vinculo in vinculos:
+        produto = produtos[vinculo.produto_id]
+        produto.quantidade -= vinculo.quantidade
+        session.add(ConsumoMaterialModel(agendamento_id=agendamento_id, produto_id=produto.id, quantidade=vinculo.quantidade, custo_unitario=produto.custo_unitario))
 
 @router.post("/", response_model=AgendamentoDto, status_code=status.HTTP_201_CREATED)
 async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = Depends(agendamento_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), tempos: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
@@ -87,6 +107,8 @@ async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository:
             )
             if not disponivel:
                 raise HTTPException(409, "A profissional não está disponível neste horário.")
+        if payload.status.value == "concluido" and existente.status != "concluido":
+            await registrar_consumo_ao_concluir(repository, agendamento_id, payload.procedimento_id)
         return await AtualizarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(id=agendamento_id, **dados_agendamento(payload, data_hora)))
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 

@@ -113,10 +113,31 @@ class EstoqueProdutoModel:
     id: Mapped[Optional[int]] = mapped_column(init=False, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(nullable=False)
     sku: Mapped[Optional[str]] = mapped_column(default=None, nullable=True)
-    quantidade: Mapped[int] = mapped_column(nullable=False, default=0)
+    quantidade: Mapped[float] = mapped_column(nullable=False, default=0)
     estoque_minimo: Mapped[int] = mapped_column(nullable=False, default=0)
     custo_unitario: Mapped[float] = mapped_column(nullable=False, default=0)
     ativo: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+@table_registry.mapped_as_dataclass
+class ProcedimentoMaterialModel:
+    __tablename__ = "procedimentos_materiais"
+    __table_args__ = (UniqueConstraint("procedimento_id", "produto_id", name="uq_procedimento_material"),)
+    id: Mapped[Optional[int]] = mapped_column(init=False, primary_key=True, autoincrement=True)
+    procedimento_id: Mapped[int] = mapped_column(ForeignKey("procedimentos.id"), nullable=False)
+    produto_id: Mapped[int] = mapped_column(ForeignKey("estoque_produtos.id"), nullable=False)
+    quantidade: Mapped[float] = mapped_column(nullable=False)
+
+
+@table_registry.mapped_as_dataclass
+class ConsumoMaterialModel:
+    __tablename__ = "consumos_materiais"
+    __table_args__ = (UniqueConstraint("agendamento_id", "produto_id", name="uq_consumo_agendamento_produto"),)
+    id: Mapped[Optional[int]] = mapped_column(init=False, primary_key=True, autoincrement=True)
+    agendamento_id: Mapped[int] = mapped_column(ForeignKey("agendamentos.id"), nullable=False)
+    produto_id: Mapped[int] = mapped_column(ForeignKey("estoque_produtos.id"), nullable=False)
+    quantidade: Mapped[float] = mapped_column(nullable=False)
+    custo_unitario: Mapped[float] = mapped_column(nullable=False)
 
 @table_registry.mapped_as_dataclass
 class ProcedimentoModel:

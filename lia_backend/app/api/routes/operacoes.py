@@ -4,9 +4,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import get_current_user, require_admin
-from app.api.schemas.operacoes import BlockCreate, PackageCreate, PackageItemCreate, PackageUpdate, PaymentCreate, ProfessionalCreate, ProfessionalUpdate, ReviewCreate, ScheduleCreate, ScheduleUpdate, StockProductCreate, UserCreate, WaitlistCreate, WaitlistPromote, WaitlistStatusUpdate
+from app.api.schemas.operacoes import BlockCreate, PackageCreate, PackageItemCreate, PackageUpdate, PaymentCreate, ProcedureMaterialCreate, ProfessionalCreate, ProfessionalUpdate, ReviewCreate, ScheduleCreate, ScheduleUpdate, StockProductCreate, UserCreate, WaitlistCreate, WaitlistPromote, WaitlistStatusUpdate
 from app.infrastructure.database.db import get_session
-from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProcedimentoModel, ProfissionalModel, UserModel
+from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, ConsumoMaterialModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProcedimentoMaterialModel, ProcedimentoModel, ProfissionalModel, UserModel
 from app.infrastructure.security.auth import hash_password
 
 router = APIRouter(prefix="/operacoes", tags=["Operações"], dependencies=[Depends(get_current_user)])
@@ -267,3 +267,60 @@ async def criar_produto_estoque(payload: StockProductCreate, session: AsyncSessi
 @router.get("/estoque/produtos")
 async def listar_produtos_estoque(session: AsyncSession = Depends(get_session)):
     return (await session.execute(select(EstoqueProdutoModel).order_by(EstoqueProdutoModel.nome))).scalars().all()
+
+
+@router.put("/estoque/produtos/{produto_id}")
+async def atualizar_produto_estoque(produto_id: int, payload: StockProductCreate, session: AsyncSession = Depends(get_session)):
+    item = await session.get(EstoqueProdutoModel, produto_id)
+    if not item:
+        raise HTTPException(404, "Produto de estoque não encontrado")
+    for key, value in payload.model_dump().items():
+        setattr(item, key, value)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+@router.delete("/estoque/produtos/{produto_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_produto_estoque(produto_id: int, session: AsyncSession = Depends(get_session)):
+    item = await session.get(EstoqueProdutoModel, produto_id)
+    if not item:
+        raise HTTPException(404, "Produto de estoque não encontrado")
+    vinculado = (await session.execute(select(ProcedimentoMaterialModel.id).where(ProcedimentoMaterialModel.produto_id == produto_id).limit(1))).scalar_one_or_none()
+    if vinculado:
+        raise HTTPException(409, "Remova os vínculos deste produto antes de excluí-lo.")
+    consumido = (await session.execute(select(ConsumoMaterialModel.id).where(ConsumoMaterialModel.produto_id == produto_id).limit(1))).scalar_one_or_none()
+    if consumido:
+        raise HTTPException(409, "Este produto possui histórico de consumo e não pode ser excluído.")
+    await session.delete(item)
+    await session.commit()
+
+
+@router.get("/estoque/vinculos")
+async def listar_vinculos_estoque(session: AsyncSession = Depends(get_session)):
+    rows = (await session.execute(
+        select(ProcedimentoMaterialModel, ProcedimentoModel.nome, EstoqueProdutoModel.nome)
+        .join(ProcedimentoModel, ProcedimentoModel.id == ProcedimentoMaterialModel.procedimento_id)
+        .join(EstoqueProdutoModel, EstoqueProdutoModel.id == ProcedimentoMaterialModel.produto_id)
+    )).all()
+    return [{"id": item.id, "procedimento_id": item.procedimento_id, "procedimento_nome": procedimento, "produto_id": item.produto_id, "produto_nome": produto, "quantidade": item.quantidade} for item, procedimento, produto in rows]
+
+
+@router.post("/estoque/vinculos", status_code=status.HTTP_201_CREATED)
+async def criar_vinculo_estoque(payload: ProcedureMaterialCreate, session: AsyncSession = Depends(get_session)):
+    if not await session.get(ProcedimentoModel, payload.procedimento_id) or not await session.get(EstoqueProdutoModel, payload.produto_id):
+        raise HTTPException(404, "Procedimento ou produto não encontrado")
+    existente = (await session.execute(select(ProcedimentoMaterialModel).where(ProcedimentoMaterialModel.procedimento_id == payload.procedimento_id, ProcedimentoMaterialModel.produto_id == payload.produto_id))).scalar_one_or_none()
+    if existente:
+        existente.quantidade = payload.quantidade
+        item = existente
+    else:
+        item = ProcedimentoMaterialModel(**payload.model_dump()); session.add(item)
+    await session.commit(); await session.refresh(item); return item
+
+
+@router.delete("/estoque/vinculos/{vinculo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_vinculo_estoque(vinculo_id: int, session: AsyncSession = Depends(get_session)):
+    item = await session.get(ProcedimentoMaterialModel, vinculo_id)
+    if not item: raise HTTPException(404, "Vínculo não encontrado")
+    await session.delete(item); await session.commit()

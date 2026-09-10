@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import get_current_user
 from app.infrastructure.database.db import get_session
-from app.infrastructure.database.models.models import AgendamentoModel, ProcedimentoModel
+from app.infrastructure.database.models.models import AgendamentoModel, ConsumoMaterialModel, ProcedimentoMaterialModel, EstoqueProdutoModel, ProcedimentoModel
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios"], dependencies=[Depends(get_current_user)])
 
@@ -51,10 +51,16 @@ async def resumo(
     appointments = (await session.execute(select(AgendamentoModel).where(AgendamentoModel.data_hora >= inicio_dt, AgendamentoModel.data_hora < fim_exclusivo))).scalars().all()
     procedures = (await session.execute(select(ProcedimentoModel))).scalars().all()
     prices = {item.id: item.preco for item in procedures}
-    material_costs = {item.id: item.custo_materiais for item in procedures}
+    recipe_rows = (await session.execute(select(ProcedimentoMaterialModel.procedimento_id, func.sum(ProcedimentoMaterialModel.quantidade * EstoqueProdutoModel.custo_unitario)).join(EstoqueProdutoModel, EstoqueProdutoModel.id == ProcedimentoMaterialModel.produto_id).group_by(ProcedimentoMaterialModel.procedimento_id))).all()
+    material_costs = {procedure_id: cost for procedure_id, cost in recipe_rows}
+    legacy_material_costs = {item.id: item.custo_materiais for item in procedures}
+    consumption_rows = (await session.execute(select(ConsumoMaterialModel.agendamento_id, func.sum(ConsumoMaterialModel.quantidade * ConsumoMaterialModel.custo_unitario)).group_by(ConsumoMaterialModel.agendamento_id))).all()
+    consumption_costs = {appointment_id: cost for appointment_id, cost in consumption_rows}
     realizados = [item for item in appointments if item.status == "concluido"]
     faturamento = sum(item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0) for item in realizados)
-    custos_materiais = sum(material_costs.get(item.procedimento_id, 0) for item in realizados)
+    def custo_do_atendimento(item):
+        return consumption_costs.get(item.id, material_costs.get(item.procedimento_id, legacy_material_costs.get(item.procedimento_id, 0)))
+    custos_materiais = sum(custo_do_atendimento(item) for item in realizados)
     por_procedimento = {}
     totais_por_dia = {}
     formas_pagamento = {}
@@ -62,7 +68,7 @@ async def resumo(
         entry = por_procedimento.setdefault(item.procedimento_id, {"procedimento_id": item.procedimento_id, "quantidade": 0, "faturamento": 0, "custos_materiais": 0, "lucro": 0})
         entry["quantidade"] += 1
         valor = item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0)
-        custo = material_costs.get(item.procedimento_id, 0)
+        custo = custo_do_atendimento(item)
         entry["faturamento"] += valor
         entry["custos_materiais"] += custo
         entry["lucro"] += valor - custo

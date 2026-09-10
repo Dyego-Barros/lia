@@ -98,7 +98,13 @@ class ReviewCreate(BaseModel):
 class StockProductCreate(BaseModel):
     nome: str = Field(min_length=2)
     sku: str | None = None
-    quantidade: int = Field(ge=0)
+    quantidade: float = Field(ge=0)
     estoque_minimo: int = Field(ge=0)
     custo_unitario: float = Field(ge=0)
     ativo: bool = True
+
+
+class ProcedureMaterialCreate(BaseModel):
+    procedimento_id: int = Field(gt=0)
+    produto_id: int = Field(gt=0)
+    quantidade: float = Field(gt=0)
