@@ -39,10 +39,22 @@ class FakeHorarioProfissionalRepository:
     async def janelas_do_dia(self, profissional_id, dia):
         return [(time(8), time(20))]
 
+    async def buscar_profissional_ativo(self, profissional_id):
+        return object()
+
 
 class FakeTempoTrabalhoRepository:
     async def listar_por_dia(self, dia):
         return [(datetime.combine(dia, time(9)), datetime.combine(dia, time(18)))]
+
+    async def listar_bloqueios_por_dia(self, dia, profissional_id=None):
+        return []
+
+
+class FakeProcedimentoRepository:
+    async def get_procedimento_by_id(self, procedimento_id):
+        from app.application.dto.procedimento import ProcedimentoDto
+        return ProcedimentoDto(id=procedimento_id, nome="Procedimento", preco=50, duracao=10)
 
 
 class AgendamentoServiceTest(unittest.TestCase):
@@ -110,6 +122,32 @@ class AgendamentoServiceTest(unittest.TestCase):
             janelas,
             [(datetime.combine(dia, time(8)), datetime.combine(dia, time(20)))],
         )
+
+    def test_cadastro_manual_aceita_minuto_fora_da_grade_de_sugestoes(self):
+        service = AtendimentoService(
+            None,
+            FakeProcedimentoRepository(),
+            FakeAgendamentoRepository(),
+            FakeTempoTrabalhoRepository(),
+            FakeHorarioProfissionalRepository(),
+        )
+        disponivel = asyncio.run(
+            service.horario_disponivel(2, datetime(2026, 9, 16, 14, 10), 3)
+        )
+        self.assertTrue(disponivel)
+
+    def test_cadastro_manual_recusa_procedimento_que_ultrapassa_as_vinte(self):
+        service = AtendimentoService(
+            None,
+            FakeProcedimentoRepository(),
+            FakeAgendamentoRepository(),
+            FakeTempoTrabalhoRepository(),
+            FakeHorarioProfissionalRepository(),
+        )
+        disponivel = asyncio.run(
+            service.horario_disponivel(2, datetime(2026, 9, 16, 19, 55), 3)
+        )
+        self.assertFalse(disponivel)
 
     def test_atualizacao_de_pagamento_em_agendamento_passado(self):
         repository = FakeAgendamentoRepository()

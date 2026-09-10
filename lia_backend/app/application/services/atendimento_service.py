@@ -104,6 +104,44 @@ class AtendimentoService:
         )
         return sorted({horario for opcao in opcoes for horario in opcao["horarios"]})
 
+    async def horario_disponivel(
+        self,
+        procedimento_id: int,
+        data_hora: datetime,
+        profissional_id: int,
+        ignorar_agendamento_id: int | None = None,
+    ) -> bool:
+        """Valida um horário exato sem restringi-lo à grade visual de 30 minutos."""
+        profissional = await self.horarios_profissionais.buscar_profissional_ativo(profissional_id)
+        if not profissional:
+            raise ValueError("Profissional não encontrado ou inativo.")
+
+        procedimento = await self.procedimentos.buscar(procedimento_id)
+        fim = data_hora + timedelta(minutes=procedimento.duracao)
+        janelas = await self._janelas_do_profissional(profissional_id, data_hora.date())
+        if not any(data_hora >= inicio and fim <= fim_expediente for inicio, fim_expediente in janelas):
+            return False
+
+        bloqueios = await self.tempos_trabalho.listar_bloqueios_por_dia(
+            data_hora.date(), profissional_id,
+        ) if self.tempos_trabalho else []
+        if any(data_hora < bloqueio_fim and fim > bloqueio_inicio for bloqueio_inicio, bloqueio_fim in bloqueios):
+            return False
+
+        for agendamento in await self.agendamentos.listar():
+            if agendamento.id == ignorar_agendamento_id or agendamento.status in (
+                StatusAgendamento.CANCELADO.value,
+                StatusAgendamento.NAO_COMPARECEU.value,
+            ):
+                continue
+            if agendamento.profissional_id not in (None, profissional_id):
+                continue
+            outro = await self.procedimentos.buscar(agendamento.procedimento_id)
+            outro_fim = agendamento.data_hora + timedelta(minutes=outro.duracao)
+            if data_hora < outro_fim and fim > agendamento.data_hora:
+                return False
+        return True
+
     async def iniciar_agendamento(self, cliente: ClienteDto, procedimento_id: int, data_hora: datetime, profissional_id: int):
         await self.procedimentos.buscar(procedimento_id)
         if data_hora not in await self.disponibilidade(procedimento_id, data_hora.date(), profissional_id):

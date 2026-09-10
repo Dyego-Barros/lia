@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.routes.dependencies import agendamento_repository, procedimento_repository, tempo_trabalho_repository
@@ -6,7 +6,6 @@ from app.api.routes.auth import get_current_user
 from app.api.schemas.agendamentos import AgendamentoCreate
 from app.application.dto.agendamento import AgendamentoDto
 from app.application.services.agendamento_service import AgendamentoService
-from app.application.services.procedimento_service import ProcedimentoService
 from app.application.use_cases.agendamentos.buscar_agendamento import BuscarAgendamento
 from app.application.use_cases.agendamentos.listar_agendamentos import ListarAgendamentos
 from app.application.use_cases.agendamentos.atualizar_agendamento import AtualizarAgendamento
@@ -39,21 +38,15 @@ async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = 
         if payload.profissional_id is None:
             raise HTTPException(400, "Selecione uma profissional para criar o agendamento.")
         data_hora = normalizar_data_hora(payload.data_hora)
-        procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
-        fim = data_hora + timedelta(minutes=procedimento.duracao)
-        bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
-        if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
-            raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
         # Este endpoint alimenta a tela administrativa, que também é usada para
-        # lançar atendimentos já ocorridos. A agenda pública e o bot continuam
-        # oferecendo exclusivamente horários futuros.
-        disponiveis = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade(
+        # lançar horários livres (inclusive minutos fora da grade de sugestões
+        # do bot), desde que estejam integralmente dentro da escala.
+        disponivel = await AtendimentoService(None, procedimentos, repository, tempos).horario_disponivel(
             payload.procedimento_id,
-            data_hora.date(),
+            data_hora,
             payload.profissional_id,
-            incluir_horarios_passados=True,
         )
-        if data_hora not in disponiveis:
+        if not disponivel:
             raise HTTPException(409, "A profissional não está disponível neste horário.")
         return await AgendamentoService(repository).criar(
             AgendamentoDto(**dados_agendamento(payload, data_hora)),
@@ -89,13 +82,10 @@ async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository:
         # Alterar status ou pagamento não muda a reserva e, portanto, não deve
         # revalidar um horário que já passou ou uma escala alterada depois dela.
         if horario_foi_alterado:
-            procedimento = await ProcedimentoService(procedimentos).buscar(payload.procedimento_id)
-            fim = data_hora + timedelta(minutes=procedimento.duracao)
-            bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
-            if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
-                raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
-            escala = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade_por_profissional(payload.procedimento_id, data_hora.date(), payload.profissional_id, agendamento_id)
-            if not any(data_hora in opcao["horarios"] for opcao in escala):
+            disponivel = await AtendimentoService(None, procedimentos, repository, tempos).horario_disponivel(
+                payload.procedimento_id, data_hora, payload.profissional_id, agendamento_id,
+            )
+            if not disponivel:
                 raise HTTPException(409, "A profissional não está disponível neste horário.")
         return await AtualizarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(id=agendamento_id, **dados_agendamento(payload, data_hora)))
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
