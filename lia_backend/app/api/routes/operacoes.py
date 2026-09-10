@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.auth import get_current_user, require_admin
 from app.api.schemas.operacoes import BlockCreate, PackageCreate, PackageItemCreate, PackageUpdate, PaymentCreate, ProcedureMaterialCreate, ProfessionalCreate, ProfessionalUpdate, ReviewCreate, ScheduleCreate, ScheduleUpdate, StockProductCreate, UserCreate, WaitlistCreate, WaitlistPromote, WaitlistStatusUpdate
 from app.infrastructure.database.db import get_session
-from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, ConsumoMaterialModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProcedimentoMaterialModel, ProcedimentoModel, ProfissionalModel, UserModel
+from app.infrastructure.database.models.models import AgendamentoModel, AvaliacaoModel, BloqueioAgendaModel, ClienteModel, ConsumoMaterialModel, EstoqueProdutoModel, HorarioProfissionalModel, ListaEsperaModel, PacoteModel, PacoteProcedimentoModel, PagamentoModel, ProcedimentoMaterialModel, ProcedimentoModel, ProfissionalModel, UserModel
 from app.infrastructure.security.auth import hash_password
 
 router = APIRouter(prefix="/operacoes", tags=["Operações"], dependencies=[Depends(get_current_user)])
@@ -162,16 +162,21 @@ async def promover_lista_espera(waitlist_id: int, payload: WaitlistPromote, sess
 
 @router.post("/pagamentos", status_code=status.HTTP_201_CREATED)
 async def registrar_pagamento(payload: PaymentCreate, session: AsyncSession = Depends(get_session)):
-    item = PagamentoModel(**payload.model_dump()); session.add(item)
     appointment = await session.get(AgendamentoModel, payload.agendamento_id)
     if not appointment: raise HTTPException(404, "Agendamento não encontrado")
+    item = (await session.execute(select(PagamentoModel).where(PagamentoModel.agendamento_id == payload.agendamento_id))).scalar_one_or_none()
+    if item:
+        item.valor = payload.valor; item.forma = payload.forma; item.status = payload.status; item.pago_em = datetime.now()
+    else:
+        item = PagamentoModel(**payload.model_dump()); session.add(item)
     appointment.valor_cobrado = payload.valor; appointment.forma_pagamento = payload.forma; appointment.status_pagamento = payload.status
     await session.commit(); await session.refresh(item); return item
 
 
 @router.get("/pagamentos")
 async def listar_pagamentos(session: AsyncSession = Depends(get_session)):
-    return (await session.execute(select(PagamentoModel).order_by(PagamentoModel.pago_em.desc()))).scalars().all()
+    rows = (await session.execute(select(PagamentoModel, ClienteModel.nome, ProcedimentoModel.nome, AgendamentoModel.data_hora).join(AgendamentoModel, AgendamentoModel.id == PagamentoModel.agendamento_id).join(ClienteModel, ClienteModel.id == AgendamentoModel.cliente_id).join(ProcedimentoModel, ProcedimentoModel.id == AgendamentoModel.procedimento_id).order_by(PagamentoModel.pago_em.desc()))).all()
+    return [{"id": item.id, "agendamento_id": item.agendamento_id, "cliente_nome": cliente, "procedimento_nome": procedimento, "data_hora": data_hora, "valor": item.valor, "forma": item.forma, "status": item.status, "pago_em": item.pago_em} for item, cliente, procedimento, data_hora in rows]
 
 
 async def pacote_com_itens(session: AsyncSession, pacote: PacoteModel) -> dict:

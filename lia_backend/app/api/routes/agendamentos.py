@@ -16,7 +16,7 @@ from app.infrastructure.repositories.repositorie_procedimento import Procediment
 from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrabalhoRepository
 from app.application.services.atendimento_service import AtendimentoService
 from app.domain.exceptions.agendamentos import AgendamentoConflictException
-from app.infrastructure.database.models.models import ConsumoMaterialModel, EstoqueProdutoModel, ProcedimentoMaterialModel
+from app.infrastructure.database.models.models import ConsumoMaterialModel, EstoqueProdutoModel, PagamentoModel, ProcedimentoMaterialModel
 
 router = APIRouter(prefix="/agendamentos", tags=["Agendamentos"], dependencies=[Depends(get_current_user)])
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
@@ -52,6 +52,22 @@ async def registrar_consumo_ao_concluir(repository: AgendamentoRepository, agend
         produto.quantidade -= vinculo.quantidade
         session.add(ConsumoMaterialModel(agendamento_id=agendamento_id, produto_id=produto.id, quantidade=vinculo.quantidade, custo_unitario=produto.custo_unitario))
 
+
+async def sincronizar_pagamento(repository: AgendamentoRepository, agendamento_id: int, payload: AgendamentoCreate) -> None:
+    session = repository.session
+    pagamento = (await session.execute(select(PagamentoModel).where(PagamentoModel.agendamento_id == agendamento_id))).scalar_one_or_none()
+    if payload.status_pagamento != "pago":
+        if pagamento:
+            await session.delete(pagamento)
+        return
+    if pagamento:
+        pagamento.valor = payload.valor_cobrado
+        pagamento.forma = payload.forma_pagamento
+        pagamento.status = "pago"
+        pagamento.pago_em = datetime.now()
+    else:
+        session.add(PagamentoModel(agendamento_id=agendamento_id, valor=payload.valor_cobrado, forma=payload.forma_pagamento, status="pago"))
+
 @router.post("/", response_model=AgendamentoDto, status_code=status.HTTP_201_CREATED)
 async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = Depends(agendamento_repository), procedimentos: ProcedimentoRepository = Depends(procedimento_repository), tempos: TempoTrabalhoRepository = Depends(tempo_trabalho_repository)):
     try:
@@ -68,10 +84,13 @@ async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = 
         )
         if not disponivel:
             raise HTTPException(409, "A profissional não está disponível neste horário.")
-        return await AgendamentoService(repository).criar(
+        criado = await AgendamentoService(repository).criar(
             AgendamentoDto(**dados_agendamento(payload, data_hora)),
             permitir_data_passada=True,
         )
+        await sincronizar_pagamento(repository, criado.id, payload)
+        await repository.session.commit()
+        return criado
     except AgendamentoConflictException as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
@@ -109,6 +128,7 @@ async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository:
                 raise HTTPException(409, "A profissional não está disponível neste horário.")
         if payload.status.value == "concluido" and existente.status != "concluido":
             await registrar_consumo_ao_concluir(repository, agendamento_id, payload.procedimento_id)
+        await sincronizar_pagamento(repository, agendamento_id, payload)
         return await AtualizarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(id=agendamento_id, **dados_agendamento(payload, data_hora)))
     except ValueError as exc: raise HTTPException(404, str(exc)) from exc
 
