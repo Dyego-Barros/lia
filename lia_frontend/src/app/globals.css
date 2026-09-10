@@ -16,12 +16,16 @@
   box-sizing: border-box;
 }
 
+html { min-width: 0; overflow-x: hidden; }
+
 body {
   margin: 0;
   background: #f7f4f1;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   font-size: 1.0625rem;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .text-sm { font-size: 0.9375rem; }
@@ -35,6 +39,7 @@ body {
   padding: 0.75rem 1rem;
   color: #0f172a;
   outline: none;
+  min-width: 0;
 }
 
 .field:focus { border-color: #7fa98b; }
@@ -144,3 +149,24 @@ button.bg-zinc-900 { background-color: #000000 !important; }
 main .bg-fuchsia-50 *, main .bg-fuchsia-100 *, main .bg-fuchsia-600\/20 * { color: #111111 !important; }
 main .bg-fuchsia-700, main .primary-button { background-color: #7fa98b !important; color: #ffffff !important; }
 main .bg-fuchsia-700:hover, main .primary-button:hover { background-color: #668a70 !important; }
+
+main, main > div, main section, main form { min-width: 0; }
+
+@media (max-width: 639px) {
+  body { font-size: 1rem; }
+  main > .flex-1 header { align-items: stretch; flex-direction: column; gap: 0.75rem; padding: 1rem; }
+  main > .flex-1 header button, main > .flex-1 header a { max-width: 100%; }
+  main .fixed.inset-0.z-50 { align-items: flex-start; overflow-y: auto; padding: 0.75rem; }
+  main .fixed.inset-0.z-50 > form, main .fixed.inset-0.z-50 > div { width: 100%; max-width: 100%; max-height: calc(100dvh - 1.5rem); margin: 0; overflow-y: auto; padding: 1rem; }
+  main .grid.grid-cols-3, main [class*="grid-cols-[1fr_70px_auto]"] { grid-template-columns: minmax(0, 1fr); }
+  main fieldset { padding: 0.875rem; }
+  .data-table-wrapper .dt-layout-row { align-items: stretch; flex-direction: column; gap: 0.75rem; }
+  .data-table-wrapper .dt-layout-cell, .data-table-wrapper .dt-search, .data-table-wrapper .dt-length { width: 100%; text-align: left !important; }
+  .data-table-wrapper .dt-search input { width: 100%; margin-left: 0; margin-top: 0.35rem; }
+  .data-table-wrapper table.dataTable { min-width: 42rem; }
+  .table-action { margin-bottom: 0.3rem; white-space: nowrap; }
+}
+
+@media (min-width: 640px) {
+  main .fixed.inset-0.z-50 { align-items: center; }
+}

@@ -149,6 +149,22 @@ class AgendamentoServiceTest(unittest.TestCase):
         )
         self.assertFalse(disponivel)
 
+    def test_horario_fora_da_escala_informa_periodos_corretos(self):
+        service = AtendimentoService(
+            None,
+            FakeProcedimentoRepository(),
+            FakeAgendamentoRepository(),
+            FakeTempoTrabalhoRepository(),
+            FakeHorarioProfissionalRepository(),
+        )
+        motivo = asyncio.run(
+            service.motivo_indisponibilidade(2, datetime(2026, 9, 10, 7, 30), 3)
+        )
+        self.assertEqual(
+            motivo,
+            "O atendimento precisa começar e terminar dentro da escala de quinta-feira: 08:00–20:00.",
+        )
+
     def test_atualizacao_de_pagamento_em_agendamento_passado(self):
         repository = FakeAgendamentoRepository()
         resultado = asyncio.run(

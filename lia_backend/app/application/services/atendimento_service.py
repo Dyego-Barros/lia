@@ -112,21 +112,37 @@ class AtendimentoService:
         ignorar_agendamento_id: int | None = None,
     ) -> bool:
         """Valida um horário exato sem restringi-lo à grade visual de 30 minutos."""
+        return await self.motivo_indisponibilidade(
+            procedimento_id, data_hora, profissional_id, ignorar_agendamento_id,
+        ) is None
+
+    async def motivo_indisponibilidade(
+        self,
+        procedimento_id: int,
+        data_hora: datetime,
+        profissional_id: int,
+        ignorar_agendamento_id: int | None = None,
+    ) -> str | None:
+        """Explica precisamente por que um horário manual não pode ser reservado."""
         profissional = await self.horarios_profissionais.buscar_profissional_ativo(profissional_id)
         if not profissional:
-            raise ValueError("Profissional não encontrado ou inativo.")
+            return "A profissional selecionada não existe ou está inativa."
 
         procedimento = await self.procedimentos.buscar(procedimento_id)
         fim = data_hora + timedelta(minutes=procedimento.duracao)
         janelas = await self._janelas_do_profissional(profissional_id, data_hora.date())
+        dias = ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo")
+        if not janelas:
+            return "A profissional não possui horário de atendimento cadastrado para " + dias[data_hora.weekday()] + "."
         if not any(data_hora >= inicio and fim <= fim_expediente for inicio, fim_expediente in janelas):
-            return False
+            periodos = ", ".join(f"{inicio:%H:%M}–{fim_expediente:%H:%M}" for inicio, fim_expediente in janelas)
+            return f"O atendimento precisa começar e terminar dentro da escala de {dias[data_hora.weekday()]}: {periodos}."
 
         bloqueios = await self.tempos_trabalho.listar_bloqueios_por_dia(
             data_hora.date(), profissional_id,
         ) if self.tempos_trabalho else []
         if any(data_hora < bloqueio_fim and fim > bloqueio_inicio for bloqueio_inicio, bloqueio_fim in bloqueios):
-            return False
+            return "O horário está dentro de um bloqueio da agenda."
 
         for agendamento in await self.agendamentos.listar():
             if agendamento.id == ignorar_agendamento_id or agendamento.status in (
@@ -139,8 +155,8 @@ class AtendimentoService:
             outro = await self.procedimentos.buscar(agendamento.procedimento_id)
             outro_fim = agendamento.data_hora + timedelta(minutes=outro.duracao)
             if data_hora < outro_fim and fim > agendamento.data_hora:
-                return False
-        return True
+                return f"A profissional já possui outro atendimento entre {agendamento.data_hora:%H:%M} e {outro_fim:%H:%M}."
+        return None
 
     async def iniciar_agendamento(self, cliente: ClienteDto, procedimento_id: int, data_hora: datetime, profissional_id: int):
         await self.procedimentos.buscar(procedimento_id)

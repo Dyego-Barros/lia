@@ -77,13 +77,13 @@ async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = 
         # Este endpoint alimenta a tela administrativa, que também é usada para
         # lançar horários livres (inclusive minutos fora da grade de sugestões
         # do bot), desde que estejam integralmente dentro da escala.
-        disponivel = await AtendimentoService(None, procedimentos, repository, tempos).horario_disponivel(
+        motivo = await AtendimentoService(None, procedimentos, repository, tempos).motivo_indisponibilidade(
             payload.procedimento_id,
             data_hora,
             payload.profissional_id,
         )
-        if not disponivel:
-            raise HTTPException(409, "A profissional não está disponível neste horário.")
+        if motivo:
+            raise HTTPException(409, motivo)
         criado = await AgendamentoService(repository).criar(
             AgendamentoDto(**dados_agendamento(payload, data_hora)),
             permitir_data_passada=True,
@@ -121,11 +121,11 @@ async def atualizar(agendamento_id: int, payload: AgendamentoCreate, repository:
         # Alterar status ou pagamento não muda a reserva e, portanto, não deve
         # revalidar um horário que já passou ou uma escala alterada depois dela.
         if horario_foi_alterado:
-            disponivel = await AtendimentoService(None, procedimentos, repository, tempos).horario_disponivel(
+            motivo = await AtendimentoService(None, procedimentos, repository, tempos).motivo_indisponibilidade(
                 payload.procedimento_id, data_hora, payload.profissional_id, agendamento_id,
             )
-            if not disponivel:
-                raise HTTPException(409, "A profissional não está disponível neste horário.")
+            if motivo:
+                raise HTTPException(409, motivo)
         if payload.status.value == "concluido" and existente.status != "concluido":
             await registrar_consumo_ao_concluir(repository, agendamento_id, payload.procedimento_id)
         await sincronizar_pagamento(repository, agendamento_id, payload)
