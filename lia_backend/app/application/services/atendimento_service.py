@@ -51,17 +51,13 @@ class AtendimentoService:
 
     async def _janelas_do_profissional(self, profissional_id: int, dia: date) -> list[tuple[datetime, datetime]]:
         janelas_semanais = await self.horarios_profissionais.janelas_do_dia(profissional_id, dia)
-        janelas = [(datetime.combine(dia, inicio), datetime.combine(dia, fim)) for inicio, fim in janelas_semanais]
-        if not janelas:
-            return []
-        # tempos_trabalho é uma exceção datada da agenda geral (feriado,
-        # horário especial). Quando existir, restringe a escala semanal.
-        if self.tempos_trabalho:
-            excecoes = await self.tempos_trabalho.listar_por_dia(dia)
-            janelas = self._intersecao(janelas, excecoes) if excecoes else janelas
-        return janelas
+        # A escala semanal cadastrada para a profissional é a fonte de verdade.
+        # ``tempos_trabalho`` pertence ao fluxo legado e contém janelas de seed
+        # (por exemplo, 09:00–18:00) que não podem limitar uma escala atual até
+        # 20:00. Fechamentos e exceções reais são representados por bloqueios.
+        return [(datetime.combine(dia, inicio), datetime.combine(dia, fim)) for inicio, fim in janelas_semanais]
 
-    async def disponibilidade_por_profissional(self, procedimento_id: int, dia: date, profissional_id: int | None = None, ignorar_agendamento_id: int | None = None) -> list[dict]:
+    async def disponibilidade_por_profissional(self, procedimento_id: int, dia: date, profissional_id: int | None = None, ignorar_agendamento_id: int | None = None, incluir_horarios_passados: bool = False) -> list[dict]:
         procedimento = await self.procedimentos.buscar(procedimento_id)
         agendamentos = await self.agendamentos.listar()
         passo = timedelta(minutes=30)
@@ -94,15 +90,18 @@ class AtendimentoService:
                         if slot < outro_fim and slot_fim > agendamento.data_hora:
                             ocupado = True
                             break
-                    if not ocupado and slot > datetime.now():
+                    if not ocupado and (incluir_horarios_passados or slot > datetime.now()):
                         horarios.append(slot)
                     slot += passo
             opcoes.append({"profissional_id": profissional.id, "profissional_nome": profissional.nome, "horarios": horarios})
         return opcoes
 
-    async def disponibilidade(self, procedimento_id: int, dia: date, profissional_id: int | None = None, ignorar_agendamento_id: int | None = None) -> list[datetime]:
+    async def disponibilidade(self, procedimento_id: int, dia: date, profissional_id: int | None = None, ignorar_agendamento_id: int | None = None, incluir_horarios_passados: bool = False) -> list[datetime]:
         """Compatibilidade para consumidores antigos; prefira a versão detalhada."""
-        opcoes = await self.disponibilidade_por_profissional(procedimento_id, dia, profissional_id, ignorar_agendamento_id)
+        opcoes = await self.disponibilidade_por_profissional(
+            procedimento_id, dia, profissional_id, ignorar_agendamento_id,
+            incluir_horarios_passados,
+        )
         return sorted({horario for opcao in opcoes for horario in opcao["horarios"]})
 
     async def iniciar_agendamento(self, cliente: ClienteDto, procedimento_id: int, data_hora: datetime, profissional_id: int):

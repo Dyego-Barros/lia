@@ -7,7 +7,6 @@ from app.api.schemas.agendamentos import AgendamentoCreate
 from app.application.dto.agendamento import AgendamentoDto
 from app.application.services.agendamento_service import AgendamentoService
 from app.application.services.procedimento_service import ProcedimentoService
-from app.application.use_cases.agendamentos.cadastrar_agendamento import CadastrarAgendamento
 from app.application.use_cases.agendamentos.buscar_agendamento import BuscarAgendamento
 from app.application.use_cases.agendamentos.listar_agendamentos import ListarAgendamentos
 from app.application.use_cases.agendamentos.atualizar_agendamento import AtualizarAgendamento
@@ -45,10 +44,21 @@ async def criar(payload: AgendamentoCreate, repository: AgendamentoRepository = 
         bloqueios = await tempos.listar_bloqueios_por_dia(data_hora.date(), payload.profissional_id)
         if any(data_hora < normalizar_data_hora(bloqueio_fim) and fim > normalizar_data_hora(bloqueio_inicio) for bloqueio_inicio, bloqueio_fim in bloqueios):
             raise HTTPException(409, "O horário está dentro de um bloqueio de agenda.")
-        disponiveis = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade(payload.procedimento_id, data_hora.date(), payload.profissional_id)
+        # Este endpoint alimenta a tela administrativa, que também é usada para
+        # lançar atendimentos já ocorridos. A agenda pública e o bot continuam
+        # oferecendo exclusivamente horários futuros.
+        disponiveis = await AtendimentoService(None, procedimentos, repository, tempos).disponibilidade(
+            payload.procedimento_id,
+            data_hora.date(),
+            payload.profissional_id,
+            incluir_horarios_passados=True,
+        )
         if data_hora not in disponiveis:
             raise HTTPException(409, "A profissional não está disponível neste horário.")
-        return await CadastrarAgendamento(AgendamentoService(repository)).execute(AgendamentoDto(**dados_agendamento(payload, data_hora)))
+        return await AgendamentoService(repository).criar(
+            AgendamentoDto(**dados_agendamento(payload, data_hora)),
+            permitir_data_passada=True,
+        )
     except AgendamentoConflictException as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:

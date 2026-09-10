@@ -91,6 +91,8 @@ class Agendamento(BaseModel):
         if self.status != StatusAgendamento.CONFIRMADO.value:
             raise InvalidAgendamentoStatusException(f"Não é possível marcar como 'não compareceu' um agendamento com status '{self.status}'.")
         self.status = StatusAgendamento.NAO_COMPARECEU.value
+        self.status_pagamento = "nao_pago"
+        self.forma_pagamento = None
         
     def reagendar_agendamento(self, nova_data_hora: datetime):
         if self.status in [StatusAgendamento.CONCLUIDO.value, StatusAgendamento.NAO_COMPARECEU.value, StatusAgendamento.CANCELADO.value]:

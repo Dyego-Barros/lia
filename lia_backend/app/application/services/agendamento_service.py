@@ -18,8 +18,11 @@ class AgendamentoService:
             context={"permitir_data_passada": True},
         )
 
-    async def criar(self, agendamento: AgendamentoDto) -> AgendamentoDto:
-        entity = Agendamento.model_validate(agendamento)
+    async def criar(self, agendamento: AgendamentoDto, permitir_data_passada: bool = False) -> AgendamentoDto:
+        entity = Agendamento.model_validate(
+            agendamento,
+            context={"permitir_data_passada": permitir_data_passada},
+        )
         if await self.repository.get_agendamento_data_hora(entity.data_hora, entity.profissional_id):
             raise AgendamentoConflictException("A profissional já possui um agendamento neste horário.")
         return await self.repository.create_agendamento(AgendamentoDto.model_validate(entity))
