@@ -396,6 +396,16 @@ def _requests_human(text: str) -> bool:
     )
     return any(request in normalized for request in requests)
 
+def _requests_course(text:str) -> bool:
+    normalized  = " ".join(text.casefold.split())
+    requests= (
+        "informações de curso", "data sobre curso", "curso", 
+        "falar sobre curso","quero entrar no seu curso", 
+        "matriucla de curso", "quero ser aluna do curso",
+        "você ministra curso",
+
+    )
+    return any(request in normalized for request in requests )
 
 async def notify_appointment_confirmed(
     session: AsyncSession,
@@ -637,6 +647,7 @@ async def receber_webhook(
             chat_id=openwa_chat_id,
             foto_perfil=foto_perfil,
         )
+    
     if conversation and conversation.get("status") == "humano":
         human_until = conversation.get("humano_ate")
         if not human_until:
@@ -644,12 +655,13 @@ async def receber_webhook(
         elif human_until <= datetime.now():
             await mongo.update_status(str(conversation["_id"]), "aberta")
             conversation["status"] = "aberta"
+   
     try:
         await mongo.append_message(str(conversation["_id"]), external_id=external_id, direcao="entrada", tipo="text", conteudo=texto)
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
 
-    if conversation.get("status") == "humano" or _requests_human(texto):
+    if conversation.get("status") == "humano" or _requests_human(texto) or _requests_course(texto):
         if conversation.get("status") != "humano":
             await mongo.update_status(str(conversation["_id"]), "humano")
         logger.info("Atendimento humano solicitado para o telefone final %s", telefone[-4:])

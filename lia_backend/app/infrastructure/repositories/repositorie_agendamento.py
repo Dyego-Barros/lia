@@ -28,6 +28,7 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao criar o agendamento:", e)
             await self.session.rollback()
             raise e
+        
     async def get_agendamento_by_id(self, agendamento_id: int) -> AgendamentoDto:
         try:
             agendamento = await self.session.get(AgendamentoModel, agendamento_id)
@@ -38,6 +39,7 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao buscar o agendamento:", e)
             await self.session.rollback()
             raise e
+        
     async def update_agendamento(self, agendamento: AgendamentoDto) -> AgendamentoDto:
         try:
             agendamento_update = await self.session.get(AgendamentoModel, agendamento.id)
@@ -58,6 +60,7 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao atualizar o agendamento:", e)
             await self.session.rollback()
             raise e
+        
     async def delete_agendamento(self, agendamento_id: int) -> None:
         try:
             agendamento = await self.session.get(AgendamentoModel, agendamento_id)
@@ -69,6 +72,7 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao deletar o agendamento:", e)
             await self.session.rollback()
             raise e
+        
     async def list_agendamentos(self) -> list[AgendamentoDto]:
         try:
             result = await self.session.execute(select(AgendamentoModel))
@@ -78,6 +82,7 @@ class AgendamentoRepository(AgendamentoInterface):
             print("Ocorreu um erro ao listar os agendamentos:", e)
             await self.session.rollback()
             raise e 
+        
     async def get_agendamento_data_hora(self, data_hora, profissional_id=None) -> list[AgendamentoDto]:
         try:
             statement = select(AgendamentoModel).where(

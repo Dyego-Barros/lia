@@ -51,6 +51,7 @@ def _view(item: dict[str, Any]) -> dict[str, Any]:
         "status": item.get("status", "aberta"),
         "ultima_mensagem_em": item["ultima_mensagem_em"],
         "ultima_mensagem_recebida": item.get("ultima_mensagem_recebida"),
+        "humano_ate": item.get("humano_ate")
     }
 
 
@@ -159,7 +160,7 @@ async def update_status(conversation_id: str, status: str) -> dict[str, Any] | N
     changes: dict[str, Any] = {"status": status}
     update: dict[str, Any] = {"$set": changes}
     if status == "humano":
-        changes["humano_ate"] = datetime.now() + timedelta(hours=12)
+        changes["humano_ate"] = datetime.now() + timedelta(hours=24)
     else:
         update["$unset"] = {"humano_ate": ""}
     await collection.update_one({"_id": _object_id(conversation_id)}, update)

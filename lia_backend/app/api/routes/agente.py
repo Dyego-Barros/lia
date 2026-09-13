@@ -29,6 +29,17 @@ def _requests_human(text: str) -> bool:
         "quero falar com", "pessoa real", "atendente", "humano",
     ))
 
+def _requests_course(text:str) -> bool:
+    normalized  = " ".join(text.casefold.split())
+    requests= (
+        "informações de curso", "data sobre curso", "curso", 
+        "falar sobre curso","quero entrar no seu curso", 
+        "matriucla de curso", "quero ser aluna do curso",
+        "você ministra curso",
+
+    )
+    return any(request in normalized for request in requests )
+
 router = APIRouter(prefix="/agente", tags=["Agente de IA"], dependencies=[Depends(get_current_user)])
 
 
@@ -41,7 +52,7 @@ async def conversar(
     tempos_trabalho: TempoTrabalhoRepository = Depends(tempo_trabalho_repository),
 ):
     try:
-        if _requests_human(payload.mensagem):
+        if _requests_human(payload.mensagem) or _requests_course(payload.mensagem):
             activated = await mongo.activate_human_by_phone(payload.telefone)
             detail = (
                 "Atendimento humano ativado para este telefone."
