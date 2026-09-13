@@ -30,7 +30,7 @@ def _requests_human(text: str) -> bool:
     ))
 
 def _requests_course(text:str) -> bool:
-    normalized  = " ".join(text.casefold.split())
+    normalized = " ".join(text.casefold().split())
     requests= (
         "informações de curso", "data sobre curso", "curso", 
         "falar sobre curso","quero entrar no seu curso", 
