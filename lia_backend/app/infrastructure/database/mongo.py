@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from app.infrastructure.events.conversation_events import conversation_events
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from pymongo import ReturnDocument
@@ -51,6 +53,7 @@ def _view(item: dict[str, Any]) -> dict[str, Any]:
         "status": item.get("status", "aberta"),
         "ultima_mensagem_em": item["ultima_mensagem_em"],
         "ultima_mensagem_recebida": item.get("ultima_mensagem_recebida"),
+        "nao_lidas": item.get("nao_lidas", 0),
         "humano_ate": item.get("humano_ate")
     }
 
@@ -63,6 +66,9 @@ def _message_view(message: dict[str, Any], conversation_id: str) -> dict[str, An
         "tipo": message.get("tipo", "text"),
         "conteudo": message["conteudo"],
         "enviado_em": message["enviado_em"],
+        "arquivo_nome": message.get("arquivo_nome"),
+        "mime_type": message.get("mime_type"),
+        "arquivo_url": f"/api/integracoes/conversas/{conversation_id}/mensagens/{message['id']}/arquivo" if message.get("mime_type") else None,
     }
 
 
@@ -109,7 +115,7 @@ async def activate_human_by_phone(telefone: str) -> bool:
 
 async def create_conversation(integration_id: int, telefone: str, nome_contato: str | None = None, chat_id: str | None = None, foto_perfil: str | None = None) -> dict[str, Any]:
     now = datetime.now()
-    item = {"integration_id": integration_id, "telefone": telefone, "chat_id": chat_id, "nome_contato": nome_contato, "foto_perfil": foto_perfil, "status": "aberta", "ultima_mensagem_em": now, "mensagens": []}
+    item = {"integration_id": integration_id, "telefone": telefone, "chat_id": chat_id, "nome_contato": nome_contato, "foto_perfil": foto_perfil, "status": "aberta", "ultima_mensagem_em": now, "nao_lidas": 0, "mensagens": []}
     collection = await conversation_collection()
     result = await collection.insert_one(item)
     item["_id"] = result.inserted_id
@@ -129,23 +135,45 @@ async def update_contact(conversation_id: str, *, nome_contato: str | None = Non
         await collection.update_one({"_id": _object_id(conversation_id)}, {"$set": updates})
 
 
-async def append_message(conversation_id: str, *, direcao: str, conteudo: str, tipo: str = "text", external_id: str | None = None, enviado_em: datetime | None = None) -> dict[str, Any]:
-    message = {"id": str(uuid4()), "direcao": direcao, "tipo": tipo, "conteudo": conteudo, "external_id": external_id, "enviado_em": enviado_em or datetime.now()}
+async def append_message(conversation_id: str, *, direcao: str, conteudo: str, tipo: str = "text", external_id: str | None = None, enviado_em: datetime | None = None, arquivo_nome: str | None = None, mime_type: str | None = None) -> dict[str, Any]:
+    message = {"id": str(uuid4()), "direcao": direcao, "tipo": tipo, "conteudo": conteudo, "external_id": external_id, "enviado_em": enviado_em or datetime.now(), "arquivo_nome": arquivo_nome, "mime_type": mime_type}
     collection = await conversation_collection()
     current = await collection.find_one({"_id": _object_id(conversation_id)}, {"status": 1})
     if current is None:
         raise KeyError("Conversa não encontrada")
+    if external_id:
+        existing = await collection.find_one(
+            {"_id": _object_id(conversation_id), "mensagens.external_id": external_id},
+            {"mensagens.$": 1},
+        )
+        if existing and existing.get("mensagens"):
+            return _message_view(existing["mensagens"][0], conversation_id)
     updates: dict[str, Any] = {"ultima_mensagem_em": message["enviado_em"]}
     if current.get("status") != "humano":
         updates["status"] = "aberta"
     if direcao == "entrada":
         updates["ultima_mensagem_recebida"] = message
+    operation: dict[str, Any] = {"$push": {"mensagens": {"$each": [message], "$slice": -MONGODB_MAX_MESSAGES}}, "$set": updates}
+    if direcao == "entrada":
+        operation["$inc"] = {"nao_lidas": 1}
     result = await collection.find_one_and_update(
-        {"_id": _object_id(conversation_id)},
-        {"$push": {"mensagens": {"$each": [message], "$slice": -MONGODB_MAX_MESSAGES}}, "$set": updates},
+        {
+            "_id": _object_id(conversation_id),
+            **({"mensagens.external_id": {"$ne": external_id}} if external_id else {}),
+        },
+        operation,
         return_document=ReturnDocument.AFTER,
     )
-    return _message_view(message, conversation_id)
+    if result is None and external_id:
+        existing = await collection.find_one(
+            {"_id": _object_id(conversation_id), "mensagens.external_id": external_id},
+            {"mensagens.$": 1},
+        )
+        if existing and existing.get("mensagens"):
+            return _message_view(existing["mensagens"][0], conversation_id)
+    view = _message_view(message, conversation_id)
+    await conversation_events.publish(conversation_id)
+    return view
 
 
 async def list_messages(conversation_id: str) -> list[dict[str, Any]]:
@@ -153,6 +181,91 @@ async def list_messages(conversation_id: str) -> list[dict[str, Any]]:
     if conversation is None:
         raise KeyError("Conversa não encontrada")
     return [_message_view(item, conversation_id) for item in conversation.get("mensagens", [])]
+
+
+async def get_message(conversation_id: str, message_id: str) -> dict[str, Any] | None:
+    conversation = await get_conversation(conversation_id)
+    if conversation is None:
+        return None
+    return next((item for item in conversation.get("mensagens", []) if item.get("id") == message_id), None)
+
+
+async def mark_read(conversation_id: str) -> None:
+    collection = await conversation_collection()
+    result = await collection.update_one({"_id": _object_id(conversation_id)}, {"$set": {"nao_lidas": 0}})
+    if result.modified_count:
+        await conversation_events.publish(conversation_id)
+
+
+async def unread_summary() -> dict[str, int]:
+    collection = await conversation_collection()
+    pipeline = [
+        {"$match": {"nao_lidas": {"$gt": 0}}},
+        {"$group": {"_id": None, "conversas": {"$sum": 1}, "mensagens": {"$sum": "$nao_lidas"}}},
+    ]
+    result = await collection.aggregate(pipeline).to_list(length=1)
+    return result[0] if result else {"conversas": 0, "mensagens": 0}
+
+
+async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) -> int:
+    """Importa histórico sem duplicar e preservando a ordem cronológica."""
+    if not messages:
+        return 0
+    collection = await conversation_collection()
+    object_id = _object_id(conversation_id)
+    conversation = await collection.find_one({"_id": object_id})
+    if conversation is None:
+        raise KeyError("Conversa não encontrada")
+
+    existing = conversation.get("mensagens", [])
+    external_ids = {item.get("external_id") for item in existing if item.get("external_id")}
+    fingerprints = [
+        (item.get("direcao"), item.get("conteudo"), item.get("enviado_em"))
+        for item in existing
+    ]
+    imported: list[dict[str, Any]] = []
+    for candidate in sorted(messages, key=lambda item: item["enviado_em"]):
+        external_id = candidate.get("external_id")
+        if external_id and external_id in external_ids:
+            continue
+        duplicate = any(
+            direction == candidate["direcao"]
+            and content == candidate["conteudo"]
+            and isinstance(sent_at, datetime)
+            and abs((sent_at - candidate["enviado_em"]).total_seconds()) <= 120
+            for direction, content, sent_at in fingerprints
+        )
+        if duplicate:
+            continue
+        message = {
+            "id": str(uuid4()),
+            "direcao": candidate["direcao"],
+            "tipo": candidate.get("tipo", "text"),
+            "conteudo": candidate["conteudo"],
+            "external_id": external_id,
+            "enviado_em": candidate["enviado_em"],
+        }
+        imported.append(message)
+        fingerprints.append((message["direcao"], message["conteudo"], message["enviado_em"]))
+        if external_id:
+            external_ids.add(external_id)
+
+    if not imported:
+        return 0
+    latest = max(item["enviado_em"] for item in imported)
+    update: dict[str, Any] = {
+        "$push": {"mensagens": {"$each": imported, "$sort": {"enviado_em": 1}, "$slice": -MONGODB_MAX_MESSAGES}},
+        "$max": {"ultima_mensagem_em": latest},
+    }
+    inbound = [item for item in imported if item["direcao"] == "entrada"]
+    if inbound:
+        newest_inbound = max(inbound, key=lambda item: item["enviado_em"])
+        current_inbound = conversation.get("ultima_mensagem_recebida")
+        if not current_inbound or current_inbound.get("enviado_em") < newest_inbound["enviado_em"]:
+            update["$set"] = {"ultima_mensagem_recebida": newest_inbound}
+    await collection.update_one({"_id": object_id}, update)
+    await conversation_events.publish(conversation_id)
+    return len(imported)
 
 
 async def update_status(conversation_id: str, status: str) -> dict[str, Any] | None:
@@ -164,6 +277,7 @@ async def update_status(conversation_id: str, status: str) -> dict[str, Any] | N
     else:
         update["$unset"] = {"humano_ate": ""}
     await collection.update_one({"_id": _object_id(conversation_id)}, update)
+    await conversation_events.publish(conversation_id)
     return await get_conversation(conversation_id)
 
 

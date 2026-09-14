@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { apiGet } from "@/lib/api";
+import { useConversationEvent } from "@/components/conversation-events";
 import {
   Boxes,
   CalendarDays,
@@ -46,6 +48,17 @@ export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [operationsOpen, setOperationsOpen] = useState(pathname === "/operacoes");
+  const [unreadConversations, setUnreadConversations] = useState(0);
+  const conversationEvent = useConversationEvent();
+  useEffect(() => {
+    if (pathname === "/login") return;
+    const loadUnread = () => apiGet<{ conversas: number }>("/integracoes/conversas/nao-lidas")
+      .then((result) => setUnreadConversations(result.conversas))
+      .catch(() => undefined);
+    void loadUnread();
+    const interval = window.setInterval(loadUnread, 60000);
+    return () => window.clearInterval(interval);
+  }, [pathname, conversationEvent]);
 
   return (
     <>
@@ -91,7 +104,12 @@ export function Sidebar() {
               }`}
             >
               <Icon size={18} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {href === "/conversas" && unreadConversations > 0 && (
+                <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[11px] font-bold text-white" aria-label={`${unreadConversations} conversas não abertas`}>
+                  {unreadConversations > 99 ? "99+" : unreadConversations}
+                </span>
+              )}
             </Link>
           );
         })}

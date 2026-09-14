@@ -1,5 +1,7 @@
 import ast
+import asyncio
 import base64
+import binascii
 import html
 import hmac
 import json
@@ -9,17 +11,20 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Body, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import get_current_user, require_admin
 import httpx
-from app.api.schemas.integracoes import AIIntegrationCreate, AIIntegrationUpdate, ConversationMessageCreate, ConversationStatusUpdate, WhatsAppIntegrationCreate, WhatsAppIntegrationUpdate
-from app.infrastructure.database.db import get_session
+from app.api.schemas.integracoes import AIIntegrationCreate, AIIntegrationUpdate, ConversationAttachmentCreate, ConversationMessageCreate, ConversationStatusUpdate, WhatsAppIntegrationCreate, WhatsAppIntegrationUpdate
+from app.infrastructure.database.db import AsyncSessionLocal, get_session
 from app.infrastructure.database.models.models import AIIntegrationModel, ProcessedWebhookMessageModel, UserModel, WhatsAppIntegrationModel
 from app.infrastructure.database import mongo
+from app.infrastructure.events.conversation_events import conversation_events
+from app.infrastructure.security.auth import decode_token
 from app.infrastructure.security.secrets import decrypt_secret, encrypt_secret
 from app.agent.graph import run_agent
 from app.application.services.atendimento_service import AtendimentoService
@@ -37,6 +42,21 @@ from app.infrastructure.repositories.repositorie_tempo_trabalho import TempoTrab
 router = APIRouter(prefix="/integracoes", tags=["Integrações"])
 webhook_router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 logger = logging.getLogger(__name__)
+
+
+async def _authenticated_event_user(lia_session: str | None) -> int:
+    """Valida o cookie sem manter uma sessão SQL aberta durante todo o stream."""
+    if not lia_session:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Autenticação necessária")
+    try:
+        user_id = int(decode_token(lia_session)["sub"])
+    except (ValueError, KeyError):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token inválido ou expirado")
+    async with AsyncSessionLocal() as session:
+        user = await session.get(UserModel, user_id)
+        if not user or not user.ativo:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Usuário inativo")
+    return user_id
 
 
 def _whatsapp_view(item: WhatsAppIntegrationModel) -> dict[str, Any]:
@@ -174,6 +194,81 @@ async def listar_conversas(
     return conversas
 
 
+@router.post("/conversas/sincronizar-openwa")
+async def sincronizar_historico_openwa(
+    session: AsyncSession = Depends(get_session),
+    _: UserModel = Depends(require_admin),
+):
+    """Recupera do OpenWA as mensagens ainda ausentes na inbox local."""
+    integrations = {
+        item.id: item
+        for item in (
+            await session.execute(
+                select(WhatsAppIntegrationModel).where(
+                    WhatsAppIntegrationModel.tipo == "openwa",
+                    WhatsAppIntegrationModel.ativo.is_(True),
+                )
+            )
+        ).scalars().all()
+    }
+    conversations = [
+        item for item in await mongo.list_conversations()
+        if item.get("integration_id") in integrations
+    ]
+    imported = 0
+    examined = 0
+    failures: list[dict[str, str]] = []
+    for conversation in conversations:
+        try:
+            added, found = await _sync_openwa_conversation(
+                integrations[conversation["integration_id"]],
+                conversation,
+            )
+            imported += added
+            examined += found
+        except Exception as exc:
+            logger.exception("Falha ao sincronizar a conversa OpenWA %s", conversation["id"])
+            failures.append({"conversation_id": conversation["id"], "erro": str(exc)[:300]})
+    return {
+        "conversas": len(conversations),
+        "mensagens_examinadas": examined,
+        "mensagens_importadas": imported,
+        "falhas": failures,
+    }
+
+
+@router.get("/conversas/nao-lidas")
+async def resumo_nao_lidas(_: UserModel = Depends(get_current_user)):
+    return await mongo.unread_summary()
+
+
+@router.get("/conversas/eventos")
+async def eventos_conversas(lia_session: str | None = Cookie(default=None)):
+    await _authenticated_event_user(lia_session)
+
+    async def stream():
+        yield "retry: 3000\n\n"
+        async for queue in conversation_events.subscribe():
+            while True:
+                try:
+                    conversation_id = await asyncio.wait_for(queue.get(), timeout=20)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                payload = json.dumps({"conversation_id": conversation_id})
+                yield f"event: conversations.changed\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/conversas/{conversation_id}/foto")
 async def foto_conversa(
     conversation_id: str,
@@ -209,7 +304,19 @@ async def foto_conversa(
 @router.get("/conversas/{conversation_id}/mensagens")
 async def listar_mensagens(conversation_id: str, session: AsyncSession = Depends(get_session), _: UserModel = Depends(get_current_user)):
     try:
-        return await mongo.list_messages(str(conversation_id))
+        conversation = await mongo.get_conversation(conversation_id)
+        if conversation:
+            integration = await session.get(WhatsAppIntegrationModel, conversation.get("integration_id"))
+            if integration and integration.ativo and integration.tipo == "openwa":
+                try:
+                    view = {**conversation, "id": str(conversation["_id"])}
+                    await _sync_openwa_conversation(integration, view)
+                except Exception:
+                    # O histórico local continua disponível se o OpenWA estiver offline.
+                    logger.exception("Falha na sincronização automática da conversa %s", conversation_id)
+        messages = await mongo.list_messages(str(conversation_id))
+        await mongo.mark_read(conversation_id)
+        return messages
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
 
@@ -219,7 +326,7 @@ async def _send_through_integration(
     telefone: str,
     conteudo: str,
     chat_id: str | None = None,
-) -> None:
+) -> str | None:
     try:
         credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
     except (ValueError, SyntaxError):
@@ -271,6 +378,147 @@ async def _send_through_integration(
                 f"Falha ao enviar mensagem pelo provedor {integration.tipo} "
                 f"({response.status_code}): {detail}"
             ) from error
+        return _provider_message_id(response)
+
+
+def _provider_message_id(response: httpx.Response) -> str | None:
+    """Extrai o ID da mensagem retornado pelo provedor, quando disponível."""
+    try:
+        data: Any = response.json()
+    except ValueError:
+        return None
+
+    def find_id(value: Any) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        for field in ("messageId", "message_id", "id"):
+            candidate = value.get(field)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        key = value.get("key")
+        if isinstance(key, dict):
+            candidate = key.get("id")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        for field in ("result", "message", "data"):
+            candidate = find_id(value.get(field))
+            if candidate:
+                return candidate
+        return None
+
+    return find_id(data)
+
+
+async def _send_openwa_attachment(
+    integration: WhatsAppIntegrationModel,
+    chat_id: str,
+    attachment: ConversationAttachmentCreate,
+) -> str | None:
+    try:
+        credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
+    except (ValueError, SyntaxError):
+        credentials = ast.literal_eval(decrypt_secret(integration.credenciais_encriptadas))
+    base_url = str(credentials.get("base_url") or credentials.get("url") or "").rstrip("/")
+    api_key = credentials.get("api_key") or credentials.get("key") or credentials.get("token")
+    session_id = credentials.get("session_id") or credentials.get("session")
+    if not base_url or not api_key or not session_id:
+        raise RuntimeError("Credenciais do OpenWA incompletas")
+
+    mime_type = attachment.mime_type.casefold()
+    kind = "image" if mime_type.startswith("image/") else "video" if mime_type.startswith("video/") else "audio" if mime_type.startswith("audio/") else "document"
+    payload: dict[str, Any] = {
+        "chatId": chat_id,
+        "base64": attachment.base64,
+        "mimetype": attachment.mime_type,
+    }
+    if kind == "document":
+        payload["filename"] = attachment.nome
+    if attachment.legenda and kind in ("image", "video", "document"):
+        payload["caption"] = attachment.legenda
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            f"{base_url}/api/sessions/{session_id}/messages/send-{kind}",
+            headers={"X-API-Key": api_key},
+            json=payload,
+        )
+    response.raise_for_status()
+    return _provider_message_id(response)
+
+
+def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Normaliza uma linha do histórico persistido do OpenWA."""
+    nested_message = item.get("message") if isinstance(item.get("message"), dict) else {}
+    nested_key = item.get("key") if isinstance(item.get("key"), dict) else {}
+    content = str(
+        item.get("body")
+        or item.get("text")
+        or item.get("caption")
+        or item.get("content")
+        or nested_message.get("conversation", "")
+    ).strip()
+    if not content:
+        return None
+    external_id = str(item.get("id") or item.get("messageId") or nested_key.get("id") or "").strip() or None
+    raw_timestamp = item.get("timestamp") or item.get("messageTimestamp") or item.get("createdAt") or item.get("created_at")
+    try:
+        if isinstance(raw_timestamp, (int, float)) or (isinstance(raw_timestamp, str) and raw_timestamp.isdigit()):
+            numeric = float(raw_timestamp)
+            sent_at = datetime.fromtimestamp(numeric / 1000 if numeric > 10_000_000_000 else numeric)
+        elif isinstance(raw_timestamp, str):
+            sent_at = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
+        else:
+            sent_at = datetime.now()
+    except (OverflowError, ValueError):
+        sent_at = datetime.now()
+    from_me = item.get("fromMe")
+    if from_me is None:
+        from_me = nested_key.get("fromMe")
+    return {
+        "external_id": external_id,
+        "direcao": "saida" if from_me else "entrada",
+        "tipo": str(item.get("type") or "text"),
+        "conteudo": content,
+        "enviado_em": sent_at,
+    }
+
+
+async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conversation: dict[str, Any]) -> tuple[int, int]:
+    try:
+        credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
+    except (ValueError, SyntaxError):
+        credentials = ast.literal_eval(decrypt_secret(integration.credenciais_encriptadas))
+    base_url = str(credentials.get("base_url") or credentials.get("url") or "").rstrip("/")
+    api_key = credentials.get("api_key") or credentials.get("key") or credentials.get("token")
+    session_id = credentials.get("session_id") or credentials.get("session")
+    chat_id = conversation.get("chat_id") or f'{conversation["telefone"]}@c.us'
+    if not base_url or not api_key or not session_id:
+        raise RuntimeError("Credenciais do OpenWA incompletas")
+
+    page_size = 100
+    maximum = min(int(os.getenv("OPENWA_SYNC_MAX_MESSAGES", str(mongo.MONGODB_MAX_MESSAGES))), mongo.MONGODB_MAX_MESSAGES)
+    offset = 0
+    history: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        while offset < maximum:
+            limit = min(page_size, maximum - offset)
+            response = await client.get(
+                f"{base_url}/api/sessions/{session_id}/messages",
+                headers={"X-API-Key": api_key},
+                params={"chatId": chat_id, "limit": limit, "offset": offset, "inlineMedia": "false"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("messages", []) if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                raise RuntimeError("Resposta de histórico inválida do OpenWA")
+            history.extend(item for item in rows if isinstance(item, dict))
+            offset += len(rows)
+            total = payload.get("total") if isinstance(payload, dict) else None
+            if len(rows) < limit or (isinstance(total, int) and offset >= total):
+                break
+    normalized = [message for item in history if (message := _openwa_history_message(item))]
+    imported = await mongo.import_messages(conversation["id"], normalized)
+    return imported, len(history)
 
 
 async def _openwa_contact_details(
@@ -397,7 +645,7 @@ def _requests_human(text: str) -> bool:
     return any(request in normalized for request in requests)
 
 def _requests_course(text:str) -> bool:
-    normalized  = " ".join(text.casefold.split())
+    normalized = " ".join(text.casefold().split())
     requests= (
         "informações de curso", "data sobre curso", "curso", 
         "falar sobre curso","quero entrar no seu curso", 
@@ -455,7 +703,7 @@ async def notify_appointment_confirmed(
         f"{data_hora.strftime('%d/%m/%Y às %H:%M')} foi confirmado. "
         "Esperamos por você!"
     )
-    await _send_through_integration(
+    external_id = await _send_through_integration(
         integration,
         telefone,
         mensagem,
@@ -466,6 +714,7 @@ async def notify_appointment_confirmed(
         direcao="saida",
         tipo="text",
         conteudo=mensagem,
+        external_id=external_id,
     )
     return True
 
@@ -477,7 +726,7 @@ async def enviar_mensagem(conversation_id: str, payload: ConversationMessageCrea
     integration = await session.get(WhatsAppIntegrationModel, conversation["integration_id"])
     if not integration or not integration.ativo: raise HTTPException(409, "A integração desta conversa está inativa")
     try:
-        await _send_through_integration(
+        external_id = await _send_through_integration(
             integration,
             conversation["telefone"],
             payload.conteudo,
@@ -486,9 +735,101 @@ async def enviar_mensagem(conversation_id: str, payload: ConversationMessageCrea
     except Exception as exc:
         raise HTTPException(502, "Não foi possível enviar a mensagem pelo provedor") from exc
     try:
-        return await mongo.append_message(conversation_id, direcao="saida", tipo="text", conteudo=payload.conteudo)
+        return await mongo.append_message(conversation_id, direcao="saida", tipo="text", conteudo=payload.conteudo, external_id=external_id)
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
+
+
+@router.post("/conversas/{conversation_id}/arquivos", status_code=status.HTTP_201_CREATED)
+async def enviar_arquivo(
+    conversation_id: str,
+    payload: ConversationAttachmentCreate,
+    session: AsyncSession = Depends(get_session),
+    _: UserModel = Depends(get_current_user),
+):
+    conversation = await mongo.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(404, "Conversa não encontrada")
+    integration = await session.get(WhatsAppIntegrationModel, conversation["integration_id"])
+    if not integration or not integration.ativo:
+        raise HTTPException(409, "A integração desta conversa está inativa")
+    if integration.tipo != "openwa":
+        raise HTTPException(409, "O envio de arquivos está disponível para conversas OpenWA")
+    allowed_types = {
+        "image/jpeg", "image/png", "image/webp", "image/gif",
+        "video/mp4", "video/webm", "video/quicktime",
+        "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm",
+        "application/pdf", "text/plain", "text/csv", "application/zip",
+        "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    mime_type = payload.mime_type.casefold().split(";", 1)[0]
+    if mime_type not in allowed_types:
+        raise HTTPException(415, "Tipo de arquivo não permitido")
+    try:
+        decoded = base64.b64decode(payload.base64, validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(400, "Arquivo em base64 inválido")
+    maximum = int(os.getenv("WHATSAPP_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+    if not decoded or len(decoded) > maximum:
+        raise HTTPException(413, f"O arquivo deve ter no máximo {maximum // (1024 * 1024)} MB")
+    filename = payload.nome.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not filename or any(ord(character) < 32 for character in filename):
+        raise HTTPException(400, "Nome de arquivo inválido")
+    safe_payload = payload.model_copy(update={"nome": filename, "mime_type": mime_type})
+    chat_id = conversation.get("chat_id") or f'{conversation["telefone"]}@c.us'
+    try:
+        external_id = await _send_openwa_attachment(integration, chat_id, safe_payload)
+    except httpx.HTTPError as exc:
+        logger.exception("Falha ao enviar arquivo pelo OpenWA")
+        raise HTTPException(502, "Não foi possível enviar o arquivo pelo OpenWA") from exc
+    return await mongo.append_message(
+        conversation_id,
+        direcao="saida",
+        tipo="arquivo",
+        conteudo=payload.legenda or filename,
+        external_id=external_id,
+        arquivo_nome=filename,
+        mime_type=mime_type,
+    )
+
+
+@router.get("/conversas/{conversation_id}/mensagens/{message_id}/arquivo")
+async def obter_arquivo(
+    conversation_id: str,
+    message_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: UserModel = Depends(get_current_user),
+):
+    conversation = await mongo.get_conversation(conversation_id)
+    message = await mongo.get_message(conversation_id, message_id)
+    if not conversation or not message or not message.get("external_id") or not message.get("mime_type"):
+        raise HTTPException(404, "Arquivo não encontrado")
+    integration = await session.get(WhatsAppIntegrationModel, conversation["integration_id"])
+    if not integration or integration.tipo != "openwa":
+        raise HTTPException(404, "Arquivo não encontrado")
+    try:
+        credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
+    except (ValueError, SyntaxError):
+        credentials = ast.literal_eval(decrypt_secret(integration.credenciais_encriptadas))
+    base_url = str(credentials.get("base_url") or credentials.get("url") or "").rstrip("/")
+    api_key = credentials.get("api_key") or credentials.get("key") or credentials.get("token")
+    session_id = credentials.get("session_id") or credentials.get("session")
+    chat_id = conversation.get("chat_id") or f'{conversation["telefone"]}@c.us'
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            f"{base_url}/api/sessions/{session_id}/messages/{quote(chat_id, safe='')}/{quote(message['external_id'], safe='')}/media",
+            headers={"X-API-Key": api_key},
+        )
+    if not response.is_success:
+        raise HTTPException(404, "Arquivo não está mais disponível no OpenWA")
+    filename = message.get("arquivo_nome") or "arquivo"
+    disposition = "inline" if str(message["mime_type"]).startswith(("image/", "audio/", "video/")) else "attachment"
+    return Response(
+        content=response.content,
+        media_type=message["mime_type"],
+        headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.patch("/conversas/{conversation_id}")
@@ -569,8 +910,9 @@ async def receber_webhook(
             (str(value).strip() for value in openwa_candidates if isinstance(value, str) and "@" in value),
             None,
         )
-    if (is_evolution and evolution_key.get("fromMe")) or (is_openwa and data.get("fromMe")):
+    if is_evolution and evolution_key.get("fromMe"):
         return {"ok": True, "ignored": True, "reason": "from_me"}
+    is_openwa_outgoing = bool(is_openwa and data.get("fromMe"))
 
     if is_openwa:
         # @lid is the routing identity required by OpenWA for replies, but it
@@ -657,9 +999,20 @@ async def receber_webhook(
             conversation["status"] = "aberta"
    
     try:
-        await mongo.append_message(str(conversation["_id"]), external_id=external_id, direcao="entrada", tipo="text", conteudo=texto)
+        await mongo.append_message(
+            str(conversation["_id"]),
+            external_id=external_id,
+            direcao="saida" if is_openwa_outgoing else "entrada",
+            tipo="text",
+            conteudo=texto,
+        )
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
+
+    # Mensagens fromMe também representam respostas humanas feitas diretamente
+    # no WhatsApp/OpenWA. Elas pertencem ao histórico, mas não devem acionar a IA.
+    if is_openwa_outgoing:
+        return {"ok": True, "conversation_id": str(conversation["_id"]), "outgoing": True}
 
     if conversation.get("status") == "humano" or _requests_human(texto) or _requests_course(texto):
         if conversation.get("status") != "humano":
@@ -671,8 +1024,8 @@ async def receber_webhook(
         try:
             contexto = AtendimentoService(clientes, procedimentos, agendamentos, tempos_trabalho)
             resposta = await run_agent(texto, telefone, contexto)
-            await _send_through_integration(integration, telefone, resposta, chat_id=openwa_chat_id)
-            await mongo.append_message(str(conversation["_id"]), direcao="saida", tipo="text", conteudo=resposta)
+            response_external_id = await _send_through_integration(integration, telefone, resposta, chat_id=openwa_chat_id)
+            await mongo.append_message(str(conversation["_id"]), direcao="saida", tipo="text", conteudo=resposta, external_id=response_external_id)
         except Exception:
             if external_id:
                 await _release_webhook_message(session, provider, external_id)

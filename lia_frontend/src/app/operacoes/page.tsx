@@ -7,6 +7,7 @@ import { InteractiveTable } from "@/components/interactive-table-lazy";
 import type { TableColumn } from "@/components/interactive-table";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { OperationsSchedulePackages } from "@/components/operations-schedule-packages";
+import { NotificationAlert } from "@/components/notification-alert";
 
 type Professional = { id?: number; nome: string; especialidade?: string | null; email?: string | null; ativo: boolean };
 type Block = { id?: number; inicio: string; fim: string; motivo: string; profissional_id?: number | null };
@@ -55,7 +56,7 @@ function OperationsContent() {
         <h1 className="mt-2 text-2xl font-semibold text-slate-900">Gestão do negócio</h1>
         <p className="mt-2 text-sm text-slate-500">Use o submenu Operações para alternar entre as áreas administrativas.</p>
       </header>
-      {message && <p className="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-3 text-sm text-fuchsia-800">{message}</p>}
+      <NotificationAlert message={message} />
 
       {section === "equipe" && <>
         <div className="grid gap-4 lg:grid-cols-2">

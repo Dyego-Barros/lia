@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarClock, CalendarDays, CalendarPlus, CircleDollarSign, CreditCard, MessageSquareText, UserCheck, UserPlus, Users } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { ContactAvatar } from "@/components/contact-avatar";
+import { NotificationAlert } from "@/components/notification-alert";
 
 type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number };
 type Appointment = { id?: number; cliente_id: number; procedimento_id: number; profissional_id?: number | null; data_hora: string; status: string; valor_cobrado?: number | null; status_pagamento?: string };
@@ -120,7 +121,7 @@ export default function DashboardPage() {
 
   return <div className="space-y-6">
     <section className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm"><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · Dashboard</p><h1 className="mt-2 text-3xl font-semibold text-slate-900">Resumo do dia</h1><p className="mt-2 max-w-3xl text-sm text-slate-500">Agenda, pagamentos e desempenho em uma visão rápida.</p></section>
-    {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
+    <NotificationAlert message={error} type="error" />
 
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ title, value, hint, icon: Icon, cardClass, titleClass, iconClass, hintClass }) => <div key={title} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${titleClass}`}>{title}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p><p className={`mt-2 text-sm font-medium ${hintClass}`}>{hint}</p></div>)}</div>
 

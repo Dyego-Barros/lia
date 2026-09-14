@@ -34,3 +34,10 @@ class ConversationStatusUpdate(BaseModel):
 
 class ConversationMessageCreate(BaseModel):
     conteudo: str = Field(min_length=1, max_length=4000)
+
+
+class ConversationAttachmentCreate(BaseModel):
+    nome: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=3, max_length=150)
+    base64: str = Field(min_length=1)
+    legenda: str = Field(default="", max_length=4000)

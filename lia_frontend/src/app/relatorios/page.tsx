@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ChartNoAxesCombined, Coins, Receipt, TrendingUp } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { NotificationAlert } from "@/components/notification-alert";
 
 type Row = { procedimento_id: number; quantidade: number; faturamento: number; custos_materiais: number; lucro: number };
 type DailyPoint = { data: string; faturamento: number; lucro: number };
@@ -244,7 +245,7 @@ export default function RelatoriosPage() {
   return <div className="space-y-6">
     <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · Relatório financeiro</p><h1 className="mt-2 text-2xl font-semibold text-slate-900">Faturamento, custos e lucro</h1><p className="mt-2 text-sm text-slate-500">Os custos usam o custo médio de materiais configurado em cada procedimento.</p></header>
     <form onSubmit={load} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-end"><label className="flex-1 text-sm text-slate-600">Início<input required className="field mt-1" type="date" value={inicio} max={fim} onChange={(event) => setInicio(event.target.value)} /></label><label className="flex-1 text-sm text-slate-600">Fim<input required className="field mt-1" type="date" value={fim} min={inicio} onChange={(event) => setFim(event.target.value)} /></label><button className="primary-button md:w-auto">Atualizar relatório</button></form>
-    {error && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+    <NotificationAlert message={error} type="error" />
     {report && <>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ label, value, icon: Icon, cardClass, labelClass, iconClass }) => <div key={label} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${labelClass}`}>{label}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p></div>)}</div>
       <div className="grid gap-4 xl:grid-cols-2"><FinancialComposition report={report} />{annualVolume && <MonthlyVolume volume={annualVolume} />}</div>

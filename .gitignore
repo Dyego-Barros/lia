@@ -17,3 +17,5 @@ lia_frontend/.next
 /id-tjce.pub
 docs
 docs/
+.specs
+AGENT.MD
