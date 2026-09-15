@@ -4,6 +4,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Annotated, TypedDict
 from zoneinfo import ZoneInfo
+import json
 
 _memory = None
 _rate_limit: dict[str, list[float]] = {}
@@ -32,6 +33,7 @@ Você é a atendente virtual de studio de Lash.
 Regras:
 - Responda em português brasileiro, com clareza e cordialidade.
 - Suas respostas devem ser organizadas para melhor leitura e compreensão.
+- Os preços dos procedimentos sempre devem ser consultados na tools.
 - A apresentação inicial é enviada automaticamente pelo sistema apenas na primeira interação; não repita essa apresentação nas respostas seguintes.
 - Nunca invente, presuma ou forneça um endereço que não esteja disponível nas ferramentas ou no contexto autorizado.
 - Se perguntarem pelo endereço e ele não estiver disponível, diga apenas que não possui essa informação e ofereça atendimento humano.
@@ -143,10 +145,71 @@ def _sanitize_response(value: str) -> str:
         resposta = resposta[:code_start.start()].rstrip()
     return resposta or "Posso ajudar com informações sobre procedimentos, valores e agenda."
 
+PRICE_TERMS = (
+    "preço",
+    "preco",
+    "valor",
+    "quanto custa",
+    "qual o custo",
+    "qual valor",
+    "quanto é",
+    "quanto fica",
+)
+
+
+def _is_price_question(message: str) -> bool:
+    normalized = " ".join(message.casefold().split())
+    return any(term in normalized for term in PRICE_TERMS)
+
+def _format_brl(value: int | float) -> str:
+    formatted = f"{float(value):,.2f}"
+    formatted = formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"R$ {formatted}"
+
+
+def _build_price_response(tool_message) -> str:
+    try:
+        content = tool_message.content
+
+        if isinstance(content, str):
+            payload = json.loads(content)
+        elif isinstance(content, dict):
+            payload = content
+        else:
+            return (
+                "Não consegui consultar o preço neste momento. "
+                "Posso transferir você para o atendimento humano."
+            )
+
+        procedures = payload.get("procedimentos", [])
+
+        if not procedures:
+            return "Não encontrei esse procedimento no catálogo."
+
+        if len(procedures) == 1:
+            procedure = procedures[0]
+            return (
+                f"O valor de {procedure['nome']} é "
+                f"{_format_brl(procedure['preco'])}."
+            )
+
+        lines = [
+            f"• {procedure['nome']}: {_format_brl(procedure['preco'])}"
+            for procedure in procedures
+        ]
+
+        return "Estes são os valores cadastrados:\n" + "\n".join(lines)
+
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        logger.exception("Resultado inválido ao consultar preço de procedimento")
+        return (
+            "Não consegui consultar o preço neste momento. "
+            "Posso transferir você para o atendimento humano."
+        )
 
 async def build_graph(atendimento, telefone_atual: str | None = None):
     """Cria um grafo por requisição, compartilhando memória por thread/telefone."""
-    from langchain_core.messages import SystemMessage
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import tool
     from langgraph.graph import START, StateGraph
     from langgraph.graph.message import add_messages
@@ -384,26 +447,97 @@ async def build_graph(atendimento, telefone_atual: str | None = None):
         reagendar_agendamento,
     ]
     provider_models = await build_provider_models(tools)
+    forced_price_tool = {
+    "type": "function",
+    "function": {"name": "buscar_procedimentos"},
+}
 
     class State(TypedDict):
         messages: Annotated[list, add_messages]
 
     async def assistant(state: State):
-        hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y-%m-%d")
-        messages = [SystemMessage(content=f"{SYSTEM_PROMPT}\nData atual no fuso de São Paulo: {hoje}.\nTelefone atual do WhatsApp: {telefone_atual or 'não informado'}.\nUse essa data para interpretar hoje e amanhã e use esse telefone sem perguntar novamente."), *state["messages"]]
+        state_messages = state["messages"]
+
+        last_human_message = next(
+            (
+                message
+                for message in reversed(state_messages)
+                if isinstance(message, HumanMessage)
+            ),
+            None,
+        )
+
+        price_question = bool(
+            last_human_message
+            and isinstance(last_human_message.content, str)
+            and _is_price_question(last_human_message.content)
+        )
+
+        last_message = state_messages[-1] if state_messages else None
+
+        # A ferramenta acabou de consultar o banco.
+        # O Python monta a resposta sem deixar o LLM alterar o preço.
+        if (
+            price_question
+            and isinstance(last_message, ToolMessage)
+            and last_message.name == "buscar_procedimentos"
+        ):
+            return {
+                "messages": [
+                    AIMessage(content=_build_price_response(last_message))
+                ]
+            }
+
+        hoje = datetime.now(
+            ZoneInfo("America/Sao_Paulo")
+        ).strftime("%Y-%m-%d")
+
+        messages = [
+            SystemMessage(
+                content=(
+                    f"{SYSTEM_PROMPT}\n"
+                    f"Data atual no fuso de São Paulo: {hoje}.\n"
+                    f"Telefone atual do WhatsApp: "
+                    f"{telefone_atual or 'não informado'}.\n"
+                    "Use essa data para interpretar hoje e amanhã e use esse "
+                    "telefone sem perguntar novamente."
+                )
+            ),
+            *state_messages,
+        ]
+
         ultimo_erro: Exception | None = None
+
         for provider, model in provider_models:
             try:
-                resposta = await model.ainvoke(messages)
-                logger.info("Resposta do agente gerada pelo provedor %s", provider)
+                invocation_model = model
+
+                # Na primeira passagem de uma pergunta de preço,
+                # obriga o modelo a chamar buscar_procedimentos.
+                if price_question and isinstance(last_message, HumanMessage):
+                    invocation_model = model.bind(
+                        tool_choice=forced_price_tool
+                    )
+
+                resposta = await invocation_model.ainvoke(messages)
+
+                logger.info(
+                    "Resposta do agente gerada pelo provedor %s",
+                    provider,
+                )
                 return {"messages": [resposta]}
+
             except Exception as exc:
                 ultimo_erro = exc
+
                 if not is_transient_provider_error(exc):
                     raise
+
                 log_provider_failure(provider, exc)
 
-        raise RuntimeError("Todos os provedores de IA estão temporariamente indisponíveis") from ultimo_erro
+                raise RuntimeError(
+                    "Todos os provedores de IA estão temporariamente indisponíveis"
+                ) from ultimo_erro
 
     workflow = StateGraph(State)
     workflow.add_node("assistant", assistant)

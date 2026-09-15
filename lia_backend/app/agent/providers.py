@@ -58,7 +58,7 @@ def _build_models(tools: Sequence[Any], configurations: list[tuple[str, dict[str
     for name, config in configurations:
         kwargs = {
             "model": config["model"],
-            "temperature": 0.5,
+            "temperature": 0.0,
             "api_key": config["api_key"],
             "timeout": 30,
             "max_retries": 1,
