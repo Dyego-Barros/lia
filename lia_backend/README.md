@@ -60,17 +60,19 @@ integração:
 ```
 
 Use o mesmo valor de `OPENWA_WEBHOOK_SECRET` no campo Token do webhook e
-registre no OpenWA o webhook `http://api:8000/webhooks/openwa/<secret>` para o
-evento `message.received`. O OpenWA é uma automação não oficial do WhatsApp;
+registre no OpenWA o webhook `http://api:8000/webhooks/openwa/<secret>` para os
+eventos `message.received` e `message.sent`. O primeiro recebe mensagens dos
+clientes; o segundo registra na inbox as respostas enviadas pelo WhatsApp
+original ou por outro aparelho conectado. O OpenWA é uma automação não oficial do WhatsApp;
 avalie as limitações e o risco de bloqueio da conta antes de usar em produção.
 
 ### Sincronização do histórico
 
-Ao abrir uma conversa, a API consulta o histórico persistido do OpenWA e
-importa as mensagens que ainda não existem no MongoDB. A importação usa o ID
-original e uma comparação de conteúdo/horário para evitar duplicatas e nunca
-aciona o agente de IA. Administradores também podem sincronizar todas as
-conversas com `POST /integracoes/conversas/sincronizar-openwa`.
+A importação retroativa não é executada ao abrir uma conversa. Quando
+necessário, um administrador pode iniciá-la manualmente com
+`POST /integracoes/conversas/sincronizar-openwa`. A importação usa o ID original
+e uma comparação de conteúdo/horário para evitar duplicatas e nunca aciona o
+agente de IA.
 
 O total consultado por conversa é limitado por `OPENWA_SYNC_MAX_MESSAGES`; por
 padrão, usa o mesmo limite de `MONGODB_MAX_MESSAGES`.

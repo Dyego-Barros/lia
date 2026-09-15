@@ -1,6 +1,12 @@
 import httpx
 
-from app.api.routes.integracoes import _openwa_history_message, _openwa_media_metadata, _provider_message_id
+from app.api.routes.integracoes import (
+    _is_openwa_outgoing,
+    _openwa_history_message,
+    _openwa_media_metadata,
+    _openwa_phone_candidates,
+    _provider_message_id,
+)
 
 
 def test_extracts_openwa_message_id_from_nested_result():
@@ -16,6 +22,23 @@ def test_returns_none_when_provider_does_not_return_message_id():
     response = httpx.Response(200, json={"success": True})
 
     assert _provider_message_id(response) is None
+
+
+def test_recognizes_phone_message_as_outgoing_by_event():
+    assert _is_openwa_outgoing({"event": "message.sent"}, {"fromMe": False}) is True
+
+
+def test_outgoing_phone_candidates_do_not_use_account_number():
+    data = {
+        "from": "5511999999999@c.us",
+        "to": "5521988888888@c.us",
+        "chatId": "5521988888888@c.us",
+    }
+
+    candidates = _openwa_phone_candidates(data, outgoing=True)
+
+    assert candidates[1] == "5521988888888@c.us"
+    assert "5511999999999@c.us" not in candidates
 
 
 def test_normalizes_human_outgoing_openwa_history_message():

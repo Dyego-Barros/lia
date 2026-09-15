@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { FileText, MessageSquare, Paperclip, RefreshCw, Send, X } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, FileText, MessageSquare, Paperclip, RefreshCw, Send, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { ContactAvatar } from "@/components/contact-avatar";
 import { NotificationAlert } from "@/components/notification-alert";
@@ -9,7 +9,9 @@ import { useConversationEvent } from "@/components/conversation-events";
 
 type Conversation = { id: string; telefone: string; nome_contato: string | null; foto_perfil?: string | null; status: string; ultima_mensagem_em: string; nao_lidas: number };
 type Message = { id: string; direcao: string; tipo: string; conteudo: string; enviado_em: string; arquivo_nome?: string | null; mime_type?: string | null; arquivo_url?: string | null };
+type ConversationPage = { items: Conversation[]; page: number; page_size: number; total: number; total_pages: number };
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const PAGE_SIZE = 20;
 
 function fileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -37,21 +39,27 @@ export default function ConversasPage() {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const fileInput = useRef<HTMLInputElement>(null);
   const conversationEvent = useConversationEvent();
   useEffect(() => { if (!error) return; const timer = window.setTimeout(() => setError(null), 5000); return () => window.clearTimeout(timer); }, [error]);
 
-  async function load() {
+  const load = useCallback(async (requestedPage: number) => {
     try {
-      const next = await apiGet<Conversation[]>("/integracoes/conversas");
-      setItems(next);
-      setSelected((current) => current ? next.find((item) => item.id === current.id) ?? current : null);
+      const result = await apiGet<ConversationPage>(`/integracoes/conversas?page=${requestedPage}&page_size=${PAGE_SIZE}`);
+      setItems(result.items);
+      setTotal(result.total);
+      setTotalPages(result.total_pages);
+      if (result.page !== requestedPage) setPage(result.page);
+      setSelected((current) => current ? result.items.find((item) => item.id === current.id) ?? current : null);
     } catch (reason) { console.error("Falha ao carregar conversas", reason); }
-  }
-  async function loadMessages(conversationId: string) {
+  }, []);
+  const loadMessages = useCallback(async (conversationId: string) => {
     setMessages(await apiGet<Message[]>(`/integracoes/conversas/${conversationId}/mensagens`));
     setItems((current) => current.map((item) => item.id === conversationId ? { ...item, nao_lidas: 0 } : item));
-  }
+  }, []);
   async function open(item: Conversation) {
     try { setSelected({ ...item, nao_lidas: 0 }); await loadMessages(item.id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Falha ao carregar mensagens."); }
@@ -60,7 +68,7 @@ export default function ConversasPage() {
     if (!selected) return;
     const status = selected.status === "humano" ? "aberta" : "encerrada";
     await apiPatch(`/integracoes/conversas/${selected.id}`, { status });
-    setSelected({ ...selected, status }); await load();
+    setSelected({ ...selected, status }); await load(page);
   }
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -72,7 +80,7 @@ export default function ConversasPage() {
         : await apiPost<Message>(`/integracoes/conversas/${selected.id}/mensagens`, { conteudo: text.trim() });
       setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]); setText(""); setFile(null);
       if (fileInput.current) fileInput.current.value = "";
-      await load();
+      await load(page);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível enviar a mensagem."); }
     finally { setSending(false); }
   }
@@ -81,18 +89,18 @@ export default function ConversasPage() {
     if (next.size > MAX_FILE_BYTES) { setError("O arquivo deve ter no máximo 10 MB."); if (fileInput.current) fileInput.current.value = ""; return; }
     setFile(next);
   }
-  useEffect(() => { void load(); const interval = window.setInterval(() => void load(), 60000); return () => window.clearInterval(interval); }, []);
+  useEffect(() => { void Promise.resolve().then(() => load(page)); const interval = window.setInterval(() => void load(page), 60000); return () => window.clearInterval(interval); }, [load, page]);
   useEffect(() => {
     if (!conversationEvent) return;
-    void load();
-    if (selected?.id === conversationEvent.conversation_id) void loadMessages(selected.id).catch(() => undefined);
-  }, [conversationEvent]);
+    void Promise.resolve().then(() => load(page));
+    if (selected?.id === conversationEvent.conversation_id) void Promise.resolve().then(() => loadMessages(selected.id)).catch(() => undefined);
+  }, [conversationEvent, load, loadMessages, page, selected?.id]);
 
   return <div className="flex min-h-0 flex-col gap-6 lg:h-[calc(100vh-12rem)] lg:overflow-hidden">
-    <header className="flex shrink-0 items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · WhatsApp</p><h1 className="mt-2 text-2xl font-semibold text-slate-900">Conversas</h1><p className="mt-2 text-sm text-slate-500">Consulte o histórico e responda aos clientes pelo provedor da conversa.</p></div><button onClick={() => void load()} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" title="Atualizar"><RefreshCw size={18} /></button></header>
+    <header className="flex shrink-0 items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · WhatsApp</p><h1 className="mt-2 text-2xl font-semibold text-slate-900">Conversas</h1><p className="mt-2 text-sm text-slate-500">Consulte o histórico e responda aos clientes pelo provedor da conversa.</p></div><button onClick={() => void load(page)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" title="Atualizar"><RefreshCw size={18} /></button></header>
     <NotificationAlert message={error} type="error" />
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[320px_1fr]">
-      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><h2 className="shrink-0 px-3 py-2 font-semibold text-slate-900">Todas as conversas</h2><div className="min-h-0 flex-1 space-y-1 overflow-y-auto">{items.map((item) => <button key={item.id} onClick={() => void open(item)} className={`w-full rounded-xl p-3 text-left hover:bg-fuchsia-50 ${selected?.id === item.id ? "bg-fuchsia-50" : ""}`}><div className="flex items-center gap-3"><ContactAvatar photoUrl={item.foto_perfil} size="medium" /><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className="truncate font-medium text-slate-900">{item.nome_contato || item.telefone}</p>{item.nao_lidas > 0 && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[11px] font-bold text-white" aria-label={`${item.nao_lidas} mensagens não lidas`}>{item.nao_lidas > 99 ? "99+" : item.nao_lidas}</span>}</div><p className="truncate text-xs text-slate-500">{item.nome_contato ? item.telefone : `${item.telefone} · ${item.status}`}</p></div></div></button>)}{!items.length && <p className="p-3 text-sm text-slate-500">Nenhuma conversa recebida.</p>}</div></section>
+      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex shrink-0 items-center justify-between px-3 py-2"><h2 className="font-semibold text-slate-900">Todas as conversas</h2><span className="text-xs text-slate-500">{total} no total</span></div><div className="min-h-0 flex-1 space-y-1 overflow-y-auto">{items.map((item) => <button key={item.id} onClick={() => void open(item)} className={`w-full rounded-xl p-3 text-left hover:bg-fuchsia-50 ${selected?.id === item.id ? "bg-fuchsia-50" : ""}`}><div className="flex items-center gap-3"><ContactAvatar photoUrl={item.foto_perfil} size="medium" /><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className="truncate font-medium text-slate-900">{item.nome_contato || item.telefone}</p>{item.nao_lidas > 0 && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[11px] font-bold text-white" aria-label={`${item.nao_lidas} mensagens não lidas`}>{item.nao_lidas > 99 ? "99+" : item.nao_lidas}</span>}</div><p className="truncate text-xs text-slate-500">{item.nome_contato ? item.telefone : `${item.telefone} · ${item.status}`}</p></div></div></button>)}{!items.length && <p className="p-3 text-sm text-slate-500">Nenhuma conversa recebida.</p>}</div><nav className="flex shrink-0 items-center justify-between border-t border-slate-100 px-2 pt-3" aria-label="Paginação das conversas"><button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Página anterior"><ChevronLeft size={17} /></button><span className="text-xs text-slate-500">Página {page} de {totalPages}</span><button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page >= totalPages} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Próxima página"><ChevronRight size={17} /></button></nav></section>
       <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">{selected ? <><div className="flex shrink-0 items-center justify-between border-b border-slate-100 p-5"><div className="flex items-center gap-3"><ContactAvatar photoUrl={selected.foto_perfil} size="large" /><div><h2 className="font-semibold text-slate-900">{selected.nome_contato || selected.telefone}</h2><p className="text-sm text-slate-500">{selected.telefone}</p></div></div><button onClick={() => void closeConversation()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50">Encerrar</button></div><div className="flex min-h-0 flex-1 flex-col"><div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">{messages.map((item) => <div key={item.id} className={`max-w-[80%] rounded-xl p-3 text-sm ${item.direcao === "saida" ? "ml-auto bg-fuchsia-100 text-fuchsia-950" : "bg-slate-100 text-slate-800"}`}><Attachment message={item} /><time className="mt-1 block text-[11px] opacity-60">{new Date(item.enviado_em).toLocaleString("pt-BR")}</time></div>)}</div><form onSubmit={send} className="shrink-0 border-t border-slate-100 p-4">{file && <div className="mb-2 flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"><span className="truncate">{file.name}</span><button type="button" onClick={() => setFile(null)} aria-label="Remover arquivo"><X size={16} /></button></div>}<div className="flex gap-2"><input ref={fileInput} type="file" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /><button type="button" onClick={() => fileInput.current?.click()} disabled={sending} className="rounded-xl border border-slate-200 px-3 text-slate-600 hover:bg-slate-50" title="Anexar arquivo"><Paperclip size={19} /></button><input className="field" placeholder={file ? "Legenda (opcional)" : "Digite uma mensagem para o cliente"} value={text} onChange={(event) => setText(event.target.value)} disabled={sending} /><button disabled={sending || (!text.trim() && !file)} className="primary-button w-auto px-5" title="Enviar"><Send size={16} />Enviar</button></div></form></div></> : <div className="flex min-h-[420px] flex-1 items-center justify-center text-slate-400"><MessageSquare size={22} className="mr-2" />Selecione uma conversa</div>}</section>
     </div>
   </div>;

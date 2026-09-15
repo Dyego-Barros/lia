@@ -167,11 +167,21 @@ async def remover_ia(integration_id: int, session: AsyncSession = Depends(get_se
 
 @router.get("/conversas")
 async def listar_conversas(
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
     clientes: ClienteRepository = Depends(cliente_repository),
     _: UserModel = Depends(get_current_user),
 ):
-    conversas = await mongo.list_conversations()
+    if page is None:
+        conversas = await mongo.list_conversations()
+        total = len(conversas)
+    else:
+        conversas, total = await mongo.list_conversations_page(page, page_size)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        if page > total_pages:
+            page = total_pages
+            conversas, total = await mongo.list_conversations_page(page, page_size)
     clientes_por_telefone = {
         "".join(ch for ch in (cliente.telefone or "") if ch.isdigit()): cliente.nome
         for cliente in await clientes.list_clientes()
@@ -191,7 +201,15 @@ async def listar_conversas(
                     await mongo.update_contact(str(conversa["id"]), foto_perfil=foto)
         if conversa.get("foto_perfil"):
             conversa["foto_perfil"] = f"/api/integracoes/conversas/{conversa['id']}/foto"
-    return conversas
+    if page is None:
+        return conversas
+    return {
+        "items": conversas,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
 
 
 @router.post("/conversas/sincronizar-openwa")
@@ -407,6 +425,30 @@ def _provider_message_id(response: httpx.Response) -> str | None:
         return None
 
     return find_id(data)
+
+
+def _is_openwa_outgoing(payload: dict[str, Any], data: dict[str, Any]) -> bool:
+    event = str(payload.get("event") or "").casefold()
+    return bool(data.get("fromMe") or event == "message.sent")
+
+
+def _openwa_phone_candidates(data: dict[str, Any], outgoing: bool) -> list[Any]:
+    if outgoing:
+        return [
+            data.get("remoteJidAlt"),
+            data.get("chatId"),
+            data.get("to"),
+            data.get("recipient"),
+            data.get("remoteJid"),
+        ]
+    return [
+        data.get("remoteJidAlt"),
+        data.get("phone"),
+        data.get("from"),
+        data.get("sender"),
+        data.get("chatId"),
+        data.get("remoteJid"),
+    ]
 
 
 def _openwa_media_metadata(item: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
@@ -952,34 +994,22 @@ async def receber_webhook(
     evolution_message = data.get("message") if isinstance(data.get("message"), dict) else {}
     is_evolution = payload.get("event") == "messages.upsert" or bool(evolution_key)
     is_openwa = integration.tipo == "openwa"
+    is_openwa_outgoing = bool(is_openwa and _is_openwa_outgoing(payload, data))
     openwa_chat_id = None
     if is_openwa:
-        openwa_candidates = [
-            data.get("chatId"),
-            data.get("remoteJidAlt"),
-            data.get("remoteJid"),
-            data.get("from"),
-            data.get("sender"),
-        ]
+        openwa_candidates = _openwa_phone_candidates(data, is_openwa_outgoing)
         openwa_chat_id = next(
             (str(value).strip() for value in openwa_candidates if isinstance(value, str) and "@" in value),
             None,
         )
     if is_evolution and evolution_key.get("fromMe"):
         return {"ok": True, "ignored": True, "reason": "from_me"}
-    is_openwa_outgoing = bool(is_openwa and data.get("fromMe"))
 
     if is_openwa:
         # @lid is the routing identity required by OpenWA for replies, but it
         # is not the customer's phone number. Prefer the alternate phone JID
         # for the CRM and keep openwa_chat_id untouched for sending.
-        telefone_candidatos = [
-            data.get("remoteJidAlt"),
-            data.get("phone"),
-            data.get("from"),
-            data.get("chatId"),
-            data.get("remoteJid"),
-        ]
+        telefone_candidatos = _openwa_phone_candidates(data, is_openwa_outgoing)
         telefone_origem = next(
             (
                 value for value in telefone_candidatos

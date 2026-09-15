@@ -78,6 +78,18 @@ async def list_conversations() -> list[dict[str, Any]]:
     return [_view(item) async for item in collection.find({}, {"mensagens": 0}).sort("ultima_mensagem_em", -1)]
 
 
+async def list_conversations_page(page: int, page_size: int) -> tuple[list[dict[str, Any]], int]:
+    collection = await conversation_collection()
+    total = await collection.count_documents({})
+    cursor = (
+        collection.find({}, {"mensagens": 0})
+        .sort("ultima_mensagem_em", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return [_view(item) async for item in cursor], total
+
+
 async def get_conversation(conversation_id: str) -> dict[str, Any] | None:
     collection = await conversation_collection()
     return await collection.find_one({"_id": _object_id(conversation_id)})
