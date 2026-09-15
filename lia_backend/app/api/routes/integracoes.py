@@ -217,22 +217,29 @@ async def sincronizar_historico_openwa(
     ]
     imported = 0
     examined = 0
+    already_synchronized = 0
     failures: list[dict[str, str]] = []
     for conversation in conversations:
+        if not await mongo.claim_history_sync(conversation["id"]):
+            already_synchronized += 1
+            continue
         try:
             added, found = await _sync_openwa_conversation(
                 integrations[conversation["integration_id"]],
                 conversation,
             )
+            await mongo.complete_history_sync(conversation["id"])
             imported += added
             examined += found
         except Exception as exc:
+            await mongo.release_history_sync(conversation["id"])
             logger.exception("Falha ao sincronizar a conversa OpenWA %s", conversation["id"])
             failures.append({"conversation_id": conversation["id"], "erro": str(exc)[:300]})
     return {
         "conversas": len(conversations),
         "mensagens_examinadas": examined,
         "mensagens_importadas": imported,
+        "conversas_ja_sincronizadas": already_synchronized,
         "falhas": failures,
     }
 
@@ -302,18 +309,11 @@ async def foto_conversa(
 
 
 @router.get("/conversas/{conversation_id}/mensagens")
-async def listar_mensagens(conversation_id: str, session: AsyncSession = Depends(get_session), _: UserModel = Depends(get_current_user)):
+async def listar_mensagens(conversation_id: str, _: UserModel = Depends(get_current_user)):
     try:
-        conversation = await mongo.get_conversation(conversation_id)
-        if conversation:
-            integration = await session.get(WhatsAppIntegrationModel, conversation.get("integration_id"))
-            if integration and integration.ativo and integration.tipo == "openwa":
-                try:
-                    view = {**conversation, "id": str(conversation["_id"])}
-                    await _sync_openwa_conversation(integration, view)
-                except Exception:
-                    # O histórico local continua disponível se o OpenWA estiver offline.
-                    logger.exception("Falha na sincronização automática da conversa %s", conversation_id)
+        # O webhook persiste mensagens novas antes de publicar o evento SSE.
+        # Consultar todo o histórico do OpenWA aqui atrasava cada atualização
+        # em tempo real; a recuperação retroativa permanece na rota dedicada.
         messages = await mongo.list_messages(str(conversation_id))
         await mongo.mark_read(conversation_id)
         return messages
@@ -409,6 +409,55 @@ def _provider_message_id(response: httpx.Response) -> str | None:
     return find_id(data)
 
 
+def _openwa_media_metadata(item: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """Extrai metadados de mídia dos formatos de mensagem usados pelo OpenWA."""
+    nested = item.get("message") if isinstance(item.get("message"), dict) else {}
+    message_type = str(item.get("type") or item.get("messageType") or "").casefold()
+    typed_message = next(
+        (
+            value for key, value in nested.items()
+            if key.casefold().endswith("message") and isinstance(value, dict)
+        ),
+        {},
+    )
+    mime_type = next(
+        (
+            str(value).split(";", 1)[0].casefold()
+            for value in (
+                item.get("mimetype"), item.get("mimeType"),
+                nested.get("mimetype"), nested.get("mimeType"),
+                typed_message.get("mimetype"), typed_message.get("mimeType"),
+            )
+            if isinstance(value, str) and "/" in value
+        ),
+        None,
+    )
+    media_defaults = {
+        "image": "image/jpeg",
+        "sticker": "image/webp",
+        "video": "video/mp4",
+        "audio": "audio/ogg",
+        "ptt": "audio/ogg",
+        "document": "application/octet-stream",
+    }
+    media_kind = next((kind for kind in media_defaults if kind in message_type), None)
+    if not mime_type and media_kind:
+        mime_type = media_defaults[media_kind]
+    filename = next(
+        (
+            str(value).strip()
+            for value in (
+                item.get("filename"), item.get("fileName"),
+                nested.get("filename"), nested.get("fileName"),
+                typed_message.get("filename"), typed_message.get("fileName"),
+            )
+            if isinstance(value, str) and value.strip()
+        ),
+        None,
+    )
+    return mime_type, filename, media_kind
+
+
 async def _send_openwa_attachment(
     integration: WhatsAppIntegrationModel,
     chat_id: str,
@@ -449,12 +498,16 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     """Normaliza uma linha do histórico persistido do OpenWA."""
     nested_message = item.get("message") if isinstance(item.get("message"), dict) else {}
     nested_key = item.get("key") if isinstance(item.get("key"), dict) else {}
+    mime_type, filename, media_kind = _openwa_media_metadata(item)
     content = str(
         item.get("body")
         or item.get("text")
         or item.get("caption")
         or item.get("content")
-        or nested_message.get("conversation", "")
+        or nested_message.get("conversation")
+        or filename
+        or ({"image": "Imagem", "sticker": "Figurinha", "video": "Vídeo", "audio": "Áudio", "ptt": "Áudio", "document": "Documento"}.get(media_kind))
+        or ""
     ).strip()
     if not content:
         return None
@@ -476,9 +529,11 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "external_id": external_id,
         "direcao": "saida" if from_me else "entrada",
-        "tipo": str(item.get("type") or "text"),
+        "tipo": "arquivo" if mime_type else str(item.get("type") or "text"),
         "conteudo": content,
         "enviado_em": sent_at,
+        "arquivo_nome": filename,
+        "mime_type": mime_type,
     }
 
 
@@ -942,12 +997,15 @@ async def receber_webhook(
             or ""
         )
     telefone = str(telefone_origem).split("@", 1)[0].split(":", 1)[0]
+    openwa_mime_type, openwa_filename, openwa_media_kind = _openwa_media_metadata(data) if is_openwa else (None, None, None)
     texto = str(
         evolution_message.get("conversation")
         or (evolution_message.get("extendedTextMessage") or {}).get("text")
         or (evolution_message.get("imageMessage") or {}).get("caption")
         or data.get("body")
         or data.get("text")
+        or openwa_filename
+        or ({"image": "Imagem", "sticker": "Figurinha", "video": "Vídeo", "audio": "Áudio", "ptt": "Áudio", "document": "Documento"}.get(openwa_media_kind))
         or ""
     ).strip()
     external_id = str(
@@ -1003,8 +1061,10 @@ async def receber_webhook(
             str(conversation["_id"]),
             external_id=external_id,
             direcao="saida" if is_openwa_outgoing else "entrada",
-            tipo="text",
+            tipo="arquivo" if openwa_mime_type else "text",
             conteudo=texto,
+            arquivo_nome=openwa_filename,
+            mime_type=openwa_mime_type,
         )
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
@@ -1013,6 +1073,11 @@ async def receber_webhook(
     # no WhatsApp/OpenWA. Elas pertencem ao histórico, mas não devem acionar a IA.
     if is_openwa_outgoing:
         return {"ok": True, "conversation_id": str(conversation["_id"]), "outgoing": True}
+
+    # A mídia fica disponível na inbox; sem um pipeline multimodal configurado,
+    # ela não deve ser enviada ao agente como se o texto substituto fosse humano.
+    if openwa_mime_type:
+        return {"ok": True, "conversation_id": str(conversation["_id"]), "media": True}
 
     if conversation.get("status") == "humano" or _requests_human(texto) or _requests_course(texto):
         if conversation.get("status") != "humano":

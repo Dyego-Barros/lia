@@ -54,7 +54,8 @@ def _view(item: dict[str, Any]) -> dict[str, Any]:
         "ultima_mensagem_em": item["ultima_mensagem_em"],
         "ultima_mensagem_recebida": item.get("ultima_mensagem_recebida"),
         "nao_lidas": item.get("nao_lidas", 0),
-        "humano_ate": item.get("humano_ate")
+        "humano_ate": item.get("humano_ate"),
+        "historico_openwa_sincronizado_em": item.get("historico_openwa_sincronizado_em"),
     }
 
 
@@ -207,6 +208,43 @@ async def unread_summary() -> dict[str, int]:
     return result[0] if result else {"conversas": 0, "mensagens": 0}
 
 
+async def claim_history_sync(conversation_id: str) -> bool:
+    """Reserva uma única sincronização, recuperando reservas abandonadas."""
+    collection = await conversation_collection()
+    stale_before = datetime.now() - timedelta(minutes=15)
+    result = await collection.find_one_and_update(
+        {
+            "_id": _object_id(conversation_id),
+            "historico_openwa_sincronizado_em": {"$exists": False},
+            "$or": [
+                {"historico_openwa_sincronizando_em": {"$exists": False}},
+                {"historico_openwa_sincronizando_em": {"$lt": stale_before}},
+            ],
+        },
+        {"$set": {"historico_openwa_sincronizando_em": datetime.now()}},
+    )
+    return result is not None
+
+
+async def complete_history_sync(conversation_id: str) -> None:
+    collection = await conversation_collection()
+    await collection.update_one(
+        {"_id": _object_id(conversation_id)},
+        {
+            "$set": {"historico_openwa_sincronizado_em": datetime.now()},
+            "$unset": {"historico_openwa_sincronizando_em": ""},
+        },
+    )
+
+
+async def release_history_sync(conversation_id: str) -> None:
+    collection = await conversation_collection()
+    await collection.update_one(
+        {"_id": _object_id(conversation_id)},
+        {"$unset": {"historico_openwa_sincronizando_em": ""}},
+    )
+
+
 async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) -> int:
     """Importa histórico sem duplicar e preservando a ordem cronológica."""
     if not messages:
@@ -244,6 +282,8 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
             "conteudo": candidate["conteudo"],
             "external_id": external_id,
             "enviado_em": candidate["enviado_em"],
+            "arquivo_nome": candidate.get("arquivo_nome"),
+            "mime_type": candidate.get("mime_type"),
         }
         imported.append(message)
         fingerprints.append((message["direcao"], message["conteudo"], message["enviado_em"]))
