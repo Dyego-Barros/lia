@@ -8,6 +8,12 @@ from app.infrastructure.database.db import get_session
 from app.infrastructure.database.models.models import AgendamentoModel, ConsumoMaterialModel, ProcedimentoMaterialModel, EstoqueProdutoModel, ProcedimentoModel
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios"], dependencies=[Depends(get_current_user)])
+STATUS_COM_CUSTO_MATERIAL = frozenset({"confirmado", "concluido"})
+
+
+def agendamentos_com_custo_material(agendamentos):
+    """Retorna atendimentos confirmados ou concluídos, que comprometem material."""
+    return [item for item in agendamentos if item.status in STATUS_COM_CUSTO_MATERIAL]
 
 
 @router.get("/volume-anual")
@@ -54,28 +60,47 @@ async def resumo(
     recipe_rows = (await session.execute(select(ProcedimentoMaterialModel.procedimento_id, func.sum(ProcedimentoMaterialModel.quantidade * EstoqueProdutoModel.custo_unitario)).join(EstoqueProdutoModel, EstoqueProdutoModel.id == ProcedimentoMaterialModel.produto_id).group_by(ProcedimentoMaterialModel.procedimento_id))).all()
     material_costs = {procedure_id: cost for procedure_id, cost in recipe_rows}
     legacy_material_costs = {item.id: item.custo_materiais for item in procedures}
-    consumption_rows = (await session.execute(select(ConsumoMaterialModel.agendamento_id, func.sum(ConsumoMaterialModel.quantidade * ConsumoMaterialModel.custo_unitario)).group_by(ConsumoMaterialModel.agendamento_id))).all()
+    consumption_rows = (await session.execute(
+        select(
+            ConsumoMaterialModel.agendamento_id,
+            func.sum(ConsumoMaterialModel.quantidade * ConsumoMaterialModel.custo_unitario),
+        )
+        .join(AgendamentoModel, AgendamentoModel.id == ConsumoMaterialModel.agendamento_id)
+        .where(
+            AgendamentoModel.data_hora >= inicio_dt,
+            AgendamentoModel.data_hora < fim_exclusivo,
+        )
+        .group_by(ConsumoMaterialModel.agendamento_id)
+    )).all()
     consumption_costs = {appointment_id: cost for appointment_id, cost in consumption_rows}
     realizados = [item for item in appointments if item.status == "concluido"]
+    com_custo_material = agendamentos_com_custo_material(appointments)
     faturamento = sum(item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0) for item in realizados)
     def custo_do_atendimento(item):
         return consumption_costs.get(item.id, material_costs.get(item.procedimento_id, legacy_material_costs.get(item.procedimento_id, 0)))
-    custos_materiais = sum(custo_do_atendimento(item) for item in realizados)
+    custos_materiais = sum(custo_do_atendimento(item) for item in com_custo_material)
     por_procedimento = {}
     totais_por_dia = {}
+    for item in com_custo_material:
+        entry = por_procedimento.setdefault(item.procedimento_id, {"procedimento_id": item.procedimento_id, "quantidade": 0, "faturamento": 0, "custos_materiais": 0, "lucro": 0})
+        entry["quantidade"] += 1
+        custo = custo_do_atendimento(item)
+        entry["custos_materiais"] += custo
+        entry["lucro"] -= custo
+        dia = item.data_hora.date().isoformat()
+        total_dia = totais_por_dia.setdefault(dia, {"faturamento": 0, "lucro": 0})
+        total_dia["lucro"] -= custo
+
     formas_pagamento = {}
     for item in realizados:
         entry = por_procedimento.setdefault(item.procedimento_id, {"procedimento_id": item.procedimento_id, "quantidade": 0, "faturamento": 0, "custos_materiais": 0, "lucro": 0})
-        entry["quantidade"] += 1
         valor = item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0)
-        custo = custo_do_atendimento(item)
         entry["faturamento"] += valor
-        entry["custos_materiais"] += custo
-        entry["lucro"] += valor - custo
+        entry["lucro"] += valor
         dia = item.data_hora.date().isoformat()
         total_dia = totais_por_dia.setdefault(dia, {"faturamento": 0, "lucro": 0})
         total_dia["faturamento"] += valor
-        total_dia["lucro"] += valor - custo
+        total_dia["lucro"] += valor
         if item.status_pagamento == "pago" and item.forma_pagamento:
             pagamento = formas_pagamento.setdefault(item.forma_pagamento, {"quantidade": 0, "valor": 0})
             pagamento["quantidade"] += 1
