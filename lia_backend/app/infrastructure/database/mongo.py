@@ -64,6 +64,7 @@ def _message_view(message: dict[str, Any], conversation_id: str) -> dict[str, An
         "id": message["id"],
         "conversation_id": conversation_id,
         "direcao": message["direcao"],
+        "origem": message.get("origem") or ("cliente" if message["direcao"] == "entrada" else "desconhecida"),
         "tipo": message.get("tipo", "text"),
         "conteudo": message["conteudo"],
         "enviado_em": message["enviado_em"],
@@ -93,6 +94,12 @@ async def list_conversations_page(page: int, page_size: int) -> tuple[list[dict[
 async def get_conversation(conversation_id: str) -> dict[str, Any] | None:
     collection = await conversation_collection()
     return await collection.find_one({"_id": _object_id(conversation_id)})
+
+
+async def get_conversation_view(conversation_id: str) -> dict[str, Any] | None:
+    collection = await conversation_collection()
+    item = await collection.find_one({"_id": _object_id(conversation_id)}, {"mensagens": 0})
+    return _view(item) if item else None
 
 
 async def get_by_identity(integration_id: int, telefone: str) -> dict[str, Any] | None:
@@ -148,8 +155,19 @@ async def update_contact(conversation_id: str, *, nome_contato: str | None = Non
         await collection.update_one({"_id": _object_id(conversation_id)}, {"$set": updates})
 
 
-async def append_message(conversation_id: str, *, direcao: str, conteudo: str, tipo: str = "text", external_id: str | None = None, enviado_em: datetime | None = None, arquivo_nome: str | None = None, mime_type: str | None = None) -> dict[str, Any]:
-    message = {"id": str(uuid4()), "direcao": direcao, "tipo": tipo, "conteudo": conteudo, "external_id": external_id, "enviado_em": enviado_em or datetime.now(), "arquivo_nome": arquivo_nome, "mime_type": mime_type}
+async def _promote_message_origin(collection: AsyncIOMotorCollection, conversation_id: str, external_id: str, message: dict[str, Any], origin: str | None) -> dict[str, Any]:
+    """Corrige a origem quando o webhook de saída chega antes do envio local."""
+    if origin in {"ia", "atendente_plataforma", "sistema"} and message.get("origem") != origin:
+        await collection.update_one(
+            {"_id": _object_id(conversation_id), "mensagens.external_id": external_id},
+            {"$set": {"mensagens.$.origem": origin}},
+        )
+        message["origem"] = origin
+    return message
+
+
+async def append_message(conversation_id: str, *, direcao: str, conteudo: str, tipo: str = "text", origem: str | None = None, external_id: str | None = None, enviado_em: datetime | None = None, arquivo_nome: str | None = None, mime_type: str | None = None) -> dict[str, Any]:
+    message = {"id": str(uuid4()), "direcao": direcao, "origem": origem or ("cliente" if direcao == "entrada" else "sistema"), "tipo": tipo, "conteudo": conteudo, "external_id": external_id, "enviado_em": enviado_em or datetime.now(), "arquivo_nome": arquivo_nome, "mime_type": mime_type}
     collection = await conversation_collection()
     current = await collection.find_one({"_id": _object_id(conversation_id)}, {"status": 1})
     if current is None:
@@ -160,7 +178,8 @@ async def append_message(conversation_id: str, *, direcao: str, conteudo: str, t
             {"mensagens.$": 1},
         )
         if existing and existing.get("mensagens"):
-            return _message_view(existing["mensagens"][0], conversation_id)
+            stored = await _promote_message_origin(collection, conversation_id, external_id, existing["mensagens"][0], origem)
+            return _message_view(stored, conversation_id)
     updates: dict[str, Any] = {"ultima_mensagem_em": message["enviado_em"]}
     if current.get("status") != "humano":
         updates["status"] = "aberta"
@@ -183,7 +202,8 @@ async def append_message(conversation_id: str, *, direcao: str, conteudo: str, t
             {"mensagens.$": 1},
         )
         if existing and existing.get("mensagens"):
-            return _message_view(existing["mensagens"][0], conversation_id)
+            stored = await _promote_message_origin(collection, conversation_id, external_id, existing["mensagens"][0], origem)
+            return _message_view(stored, conversation_id)
     view = _message_view(message, conversation_id)
     await conversation_events.publish(conversation_id)
     return view
@@ -194,6 +214,33 @@ async def list_messages(conversation_id: str) -> list[dict[str, Any]]:
     if conversation is None:
         raise KeyError("Conversa não encontrada")
     return [_message_view(item, conversation_id) for item in conversation.get("mensagens", [])]
+
+
+async def list_messages_page(conversation_id: str, limit: int, before: datetime | None = None) -> dict[str, Any]:
+    """Retorna as mensagens mais recentes sem transportar todo o documento."""
+    collection = await conversation_collection()
+    condition: dict[str, Any] = {"$lt": ["$$message.enviado_em", before]} if before else {"$literal": True}
+    rows = await collection.aggregate([
+        {"$match": {"_id": _object_id(conversation_id)}},
+        {"$project": {
+            "mensagens": {
+                "$slice": [
+                    {"$filter": {"input": {"$ifNull": ["$mensagens", []]}, "as": "message", "cond": condition}},
+                    -(limit + 1),
+                ],
+            },
+        }},
+    ]).to_list(length=1)
+    if not rows:
+        raise KeyError("Conversa não encontrada")
+    messages = rows[0].get("mensagens", [])
+    has_more = len(messages) > limit
+    page = messages[-limit:]
+    return {
+        "items": [_message_view(item, conversation_id) for item in page],
+        "has_more": has_more,
+        "next_before": page[0]["enviado_em"].isoformat() if has_more and page else None,
+    }
 
 
 async def get_message(conversation_id: str, message_id: str) -> dict[str, Any] | None:
@@ -290,6 +337,7 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
         message = {
             "id": str(uuid4()),
             "direcao": candidate["direcao"],
+            "origem": candidate.get("origem") or ("cliente" if candidate["direcao"] == "entrada" else "atendente_whatsapp"),
             "tipo": candidate.get("tipo", "text"),
             "conteudo": candidate["conteudo"],
             "external_id": external_id,

@@ -191,14 +191,6 @@ async def listar_conversas(
         nome = clientes_por_telefone.get(conversa["telefone"])
         if nome:
             conversa["nome_contato"] = nome
-        if not conversa.get("foto_perfil"):
-            integration = await session.get(WhatsAppIntegrationModel, conversa.get("integration_id"))
-            if integration and integration.tipo == "openwa":
-                chat_id = conversa.get("chat_id") or f'{conversa["telefone"]}@c.us'
-                _, foto = await _openwa_contact_details(integration, chat_id)
-                if foto:
-                    conversa["foto_perfil"] = foto
-                    await mongo.update_contact(str(conversa["id"]), foto_perfil=foto)
         if conversa.get("foto_perfil"):
             conversa["foto_perfil"] = f"/api/integracoes/conversas/{conversa['id']}/foto"
     if page is None:
@@ -267,6 +259,19 @@ async def resumo_nao_lidas(_: UserModel = Depends(get_current_user)):
     return await mongo.unread_summary()
 
 
+@router.get("/conversas/{conversation_id}/resumo")
+async def resumo_conversa(conversation_id: str, _: UserModel = Depends(get_current_user)):
+    try:
+        conversa = await mongo.get_conversation_view(conversation_id)
+    except ValueError:
+        conversa = None
+    if not conversa:
+        raise HTTPException(404, "Conversa não encontrada")
+    if conversa.get("foto_perfil"):
+        conversa["foto_perfil"] = f"/api/integracoes/conversas/{conversa['id']}/foto"
+    return conversa
+
+
 @router.get("/conversas/eventos")
 async def eventos_conversas(lia_session: str | None = Cookie(default=None)):
     await _authenticated_event_user(lia_session)
@@ -327,12 +332,21 @@ async def foto_conversa(
 
 
 @router.get("/conversas/{conversation_id}/mensagens")
-async def listar_mensagens(conversation_id: str, _: UserModel = Depends(get_current_user)):
+async def listar_mensagens(
+    conversation_id: str,
+    limit: int | None = Query(default=None, ge=1, le=100),
+    before: datetime | None = Query(default=None),
+    _: UserModel = Depends(get_current_user),
+):
     try:
         # O webhook persiste mensagens novas antes de publicar o evento SSE.
         # Consultar todo o histórico do OpenWA aqui atrasava cada atualização
         # em tempo real; a recuperação retroativa permanece na rota dedicada.
-        messages = await mongo.list_messages(str(conversation_id))
+        messages = (
+            await mongo.list_messages_page(str(conversation_id), limit, before)
+            if limit is not None
+            else await mongo.list_messages(str(conversation_id))
+        )
         await mongo.mark_read(conversation_id)
         return messages
     except (KeyError, ValueError):
@@ -571,6 +585,7 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "external_id": external_id,
         "direcao": "saida" if from_me else "entrada",
+        "origem": "atendente_whatsapp" if from_me else "cliente",
         "tipo": "arquivo" if mime_type else str(item.get("type") or "text"),
         "conteudo": content,
         "enviado_em": sent_at,
@@ -809,6 +824,7 @@ async def notify_appointment_confirmed(
     await mongo.append_message(
         str(conversation["_id"] if "_id" in conversation else conversation["id"]),
         direcao="saida",
+        origem="sistema",
         tipo="text",
         conteudo=mensagem,
         external_id=external_id,
@@ -832,7 +848,7 @@ async def enviar_mensagem(conversation_id: str, payload: ConversationMessageCrea
     except Exception as exc:
         raise HTTPException(502, "Não foi possível enviar a mensagem pelo provedor") from exc
     try:
-        return await mongo.append_message(conversation_id, direcao="saida", tipo="text", conteudo=payload.conteudo, external_id=external_id)
+        return await mongo.append_message(conversation_id, direcao="saida", origem="atendente_plataforma", tipo="text", conteudo=payload.conteudo, external_id=external_id)
     except (KeyError, ValueError):
         raise HTTPException(404, "Conversa não encontrada")
 
@@ -883,6 +899,7 @@ async def enviar_arquivo(
     return await mongo.append_message(
         conversation_id,
         direcao="saida",
+        origem="atendente_plataforma",
         tipo="arquivo",
         conteudo=payload.legenda or filename,
         external_id=external_id,
@@ -1063,11 +1080,6 @@ async def receber_webhook(
         nome_contato = cliente.nome
     conversation = await mongo.get_by_identity(integration_id, telefone)
     foto_perfil = conversation.get("foto_perfil") if conversation else None
-    if is_openwa and openwa_chat_id and (not conversation or not foto_perfil or not nome_contato):
-        openwa_name, openwa_photo = await _openwa_contact_details(integration, openwa_chat_id)
-        if not nome_contato:
-            nome_contato = openwa_name
-        foto_perfil = openwa_photo or foto_perfil
     if not conversation:
         conversation = await mongo.create_conversation(integration_id, telefone, nome_contato, openwa_chat_id, foto_perfil)
     elif is_openwa:
@@ -1091,6 +1103,7 @@ async def receber_webhook(
             str(conversation["_id"]),
             external_id=external_id,
             direcao="saida" if is_openwa_outgoing else "entrada",
+            origem="atendente_whatsapp" if is_openwa_outgoing else "cliente",
             tipo="arquivo" if openwa_mime_type else "text",
             conteudo=texto,
             arquivo_nome=openwa_filename,
@@ -1120,7 +1133,7 @@ async def receber_webhook(
             contexto = AtendimentoService(clientes, procedimentos, agendamentos, tempos_trabalho)
             resposta = await run_agent(texto, telefone, contexto)
             response_external_id = await _send_through_integration(integration, telefone, resposta, chat_id=openwa_chat_id)
-            await mongo.append_message(str(conversation["_id"]), direcao="saida", tipo="text", conteudo=resposta, external_id=response_external_id)
+            await mongo.append_message(str(conversation["_id"]), direcao="saida", origem="ia", tipo="text", conteudo=resposta, external_id=response_external_id)
         except Exception:
             if external_id:
                 await _release_webhook_message(session, provider, external_id)

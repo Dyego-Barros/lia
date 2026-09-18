@@ -53,6 +53,7 @@ def test_normalizes_human_outgoing_openwa_history_message():
 
     assert message is not None
     assert message["direcao"] == "saida"
+    assert message["origem"] == "atendente_whatsapp"
     assert message["conteudo"] == "Resposta feita pela atendente"
     assert message["external_id"] == "false_5511999999999@c.us_ABC"
 
