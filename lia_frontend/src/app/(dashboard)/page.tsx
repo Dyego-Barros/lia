@@ -7,7 +7,7 @@ import { apiGet } from "@/lib/api";
 import { ContactAvatar } from "@/components/contact-avatar";
 import { NotificationAlert } from "@/components/notification-alert";
 
-type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number; custos_materiais: number };
+type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number; custos_materiais: number; procedimentos_sem_custo: number };
 type Appointment = { id?: number; cliente_id: number; procedimento_id: number; profissional_id?: number | null; data_hora: string; status: string; valor_cobrado?: number | null; status_pagamento?: string };
 type Client = { id?: number; nome: string };
 type Procedure = { id?: number; nome: string; duracao: number; preco: number };
@@ -105,12 +105,13 @@ export default function DashboardPage() {
   const maximumProcedure = Math.max(...topProcedures.map((item) => item.count), 1);
   const pendingConfirmation = todayAppointments.filter((item) => item.status === "pendente").length;
   const withoutProfessional = todayAppointments.filter((item) => !item.profissional_id).length;
+  const proceduresWithoutCost = report?.procedimentos_sem_custo ?? 0;
 
   const cards = [
     { title: "Procedimentos do dia", value: report?.agendamentos ?? 0, hint: "agendados hoje", icon: Activity, cardClass: "border-fuchsia-200 bg-gradient-to-br from-fuchsia-50 to-white", titleClass: "text-fuchsia-800", iconClass: "bg-fuchsia-100 text-fuchsia-700", hintClass: "text-fuchsia-700" },
     { title: "Clientes do dia", value: report?.clientes_do_dia ?? 0, hint: "com atendimento hoje", icon: Users, cardClass: "border-sky-200 bg-gradient-to-br from-sky-50 to-white", titleClass: "text-sky-800", iconClass: "bg-sky-100 text-sky-700", hintClass: "text-sky-700" },
     { title: "Total ganho no dia", value: report ? money.format(report.faturamento) : "—", hint: "faturamento de hoje", icon: CircleDollarSign, cardClass: "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white", titleClass: "text-emerald-800", iconClass: "bg-emerald-100 text-emerald-700", hintClass: "text-emerald-700" },
-    { title: "Gasto com materiais", value: report ? money.format(report.custos_materiais) : "—", hint: "confirmados e concluídos", icon: PackageOpen, cardClass: "border-violet-200 bg-gradient-to-br from-violet-50 to-white", titleClass: "text-violet-800", iconClass: "bg-violet-100 text-violet-700", hintClass: "text-violet-700" },
+    { title: "Gasto com materiais", value: report ? report.custos_materiais > 0 || proceduresWithoutCost === 0 ? money.format(report.custos_materiais) : "Não cadastrado" : "—", hint: proceduresWithoutCost ? `${proceduresWithoutCost} procedimento${proceduresWithoutCost > 1 ? "s" : ""} sem custo` : "confirmados e concluídos", icon: PackageOpen, cardClass: "border-violet-200 bg-gradient-to-br from-violet-50 to-white", titleClass: "text-violet-800", iconClass: "bg-violet-100 text-violet-700", hintClass: proceduresWithoutCost ? "text-amber-700" : "text-violet-700" },
     { title: "Pagamentos pendentes", value: pendingPayments.length, hint: money.format(expectedPending), icon: CreditCard, cardClass: "border-amber-200 bg-gradient-to-br from-amber-50 to-white", titleClass: "text-amber-800", iconClass: "bg-amber-100 text-amber-700", hintClass: "text-amber-700" },
   ];
 

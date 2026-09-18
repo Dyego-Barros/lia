@@ -89,6 +89,11 @@ async def resumo(
     def custo_do_atendimento(item):
         return custo_material_do_atendimento(item, consumption_costs, material_costs, legacy_material_costs)
     custos_materiais = sum(custo_do_atendimento(item) for item in com_custo_material)
+    procedimentos_sem_custo = {
+        item.procedimento_id
+        for item in com_custo_material
+        if custo_do_atendimento(item) <= 0
+    }
     por_procedimento = {}
     totais_por_dia = {}
     for item in com_custo_material:
@@ -136,6 +141,7 @@ async def resumo(
         "agendamentos": len(appointments),
         "faturamento": faturamento,
         "custos_materiais": custos_materiais,
+        "procedimentos_sem_custo": len(procedimentos_sem_custo),
         "lucro": faturamento - custos_materiais,
         "por_procedimento": list(por_procedimento.values()),
         "por_dia": por_dia,

@@ -141,7 +141,7 @@ function RevenueShare({ rows, names }: { rows: Row[]; names: Map<number, string>
 }
 
 function DailyFinancialTrend({ data }: { data: DailyPoint[] }) {
-  const width = Math.max(760, data.length * 34 + 76);
+  const width = Math.max(760, data.length * 38 + 76);
   const height = 280;
   const left = 64;
   const right = 12;
@@ -156,7 +156,7 @@ function DailyFinancialTrend({ data }: { data: DailyPoint[] }) {
   const y = (value: number) => top + ((maximum - value) / range) * chartHeight;
   const zeroY = y(0);
   const slotWidth = chartWidth / Math.max(data.length, 1);
-  const barWidth = Math.min(10, slotWidth * 0.32);
+  const barWidth = Math.min(13, slotWidth * 0.36);
   const ticks = Array.from({ length: 5 }, (_, index) => minimum + (range * index) / 4);
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
