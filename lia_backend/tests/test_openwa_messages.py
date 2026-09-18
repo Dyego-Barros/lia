@@ -4,6 +4,7 @@ import httpx
 
 from app.api.routes.integracoes import (
     _is_openwa_outgoing,
+    _openwa_history_get,
     _openwa_history_message,
     _openwa_media_metadata,
     _openwa_phone_candidates,
@@ -135,3 +136,20 @@ def test_preserves_repeated_message_outside_duplicate_window():
     candidate = {**stored, "enviado_em": sent_at + timedelta(seconds=3)}
 
     assert _has_equivalent(fingerprints, candidate) is False
+
+
+async def test_retries_openwa_history_after_rate_limit():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After-short": "0"}, request=request)
+        return httpx.Response(200, json=[], request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        response = await _openwa_history_get(client, "http://openwa/messages", headers={}, params={})
+
+    assert response.status_code == 200
+    assert calls == 2

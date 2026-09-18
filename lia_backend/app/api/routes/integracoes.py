@@ -600,6 +600,36 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _openwa_retry_after(response: httpx.Response, attempt: int) -> float:
+    waits: list[float] = []
+    for header in ("Retry-After-short", "Retry-After-medium", "Retry-After-long", "Retry-After"):
+        try:
+            waits.append(float(response.headers[header]))
+        except (KeyError, ValueError):
+            continue
+    return max(waits, default=min(2 ** attempt, 10))
+
+
+async def _openwa_history_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str],
+    params: dict[str, Any],
+) -> httpx.Response:
+    """Consulta histórico respeitando os limites globais do OpenWA."""
+    attempts = max(1, int(os.getenv("OPENWA_SYNC_RETRY_ATTEMPTS", "4")))
+    request_delay = max(0.0, float(os.getenv("OPENWA_SYNC_REQUEST_DELAY_SECONDS", "0.12")))
+    for attempt in range(attempts):
+        if request_delay:
+            await asyncio.sleep(request_delay)
+        response = await client.get(url, headers=headers, params=params)
+        if response.status_code != status.HTTP_429_TOO_MANY_REQUESTS or attempt == attempts - 1:
+            return response
+        await asyncio.sleep(_openwa_retry_after(response, attempt))
+    raise RuntimeError("Não foi possível consultar o histórico OpenWA")
+
+
 async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conversation: dict[str, Any]) -> tuple[int, int]:
     try:
         credentials = json.loads(decrypt_secret(integration.credenciais_encriptadas))
@@ -620,7 +650,8 @@ async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conve
         # O histórico ao vivo inclui mensagens escritas no celular/aparelhos
         # conectados que versões do OpenWA não persistem no banco local.
         try:
-            live_response = await client.get(
+            live_response = await _openwa_history_get(
+                client,
                 f"{base_url}/api/sessions/{session_id}/messages/{quote(chat_id, safe='')}/history",
                 headers={"X-API-Key": api_key},
                 params={"limit": min(maximum, 100), "deep": "true", "includeMedia": "false"},
@@ -636,7 +667,8 @@ async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conve
 
         while offset < maximum:
             limit = min(page_size, maximum - offset)
-            response = await client.get(
+            response = await _openwa_history_get(
+                client,
                 f"{base_url}/api/sessions/{session_id}/messages",
                 headers={"X-API-Key": api_key},
                 params={"chatId": chat_id, "limit": limit, "offset": offset, "inlineMedia": "false"},
