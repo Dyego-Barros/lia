@@ -16,6 +16,16 @@ def agendamentos_com_custo_material(agendamentos):
     return [item for item in agendamentos if item.status in STATUS_COM_CUSTO_MATERIAL]
 
 
+def custo_material_do_atendimento(item, consumption_costs, material_costs, legacy_material_costs):
+    """Prioriza o consumo real e ignora custos detalhados zerados antes do fallback."""
+    candidatos = (
+        consumption_costs.get(item.id),
+        material_costs.get(item.procedimento_id),
+        legacy_material_costs.get(item.procedimento_id),
+    )
+    return next((custo for custo in candidatos if custo is not None and custo > 0), 0)
+
+
 @router.get("/volume-anual")
 async def volume_anual(
     ano: int = Query(..., ge=2000, le=2100),
@@ -77,7 +87,7 @@ async def resumo(
     com_custo_material = agendamentos_com_custo_material(appointments)
     faturamento = sum(item.valor_cobrado if item.valor_cobrado is not None else prices.get(item.procedimento_id, 0) for item in realizados)
     def custo_do_atendimento(item):
-        return consumption_costs.get(item.id, material_costs.get(item.procedimento_id, legacy_material_costs.get(item.procedimento_id, 0)))
+        return custo_material_do_atendimento(item, consumption_costs, material_costs, legacy_material_costs)
     custos_materiais = sum(custo_do_atendimento(item) for item in com_custo_material)
     por_procedimento = {}
     totais_por_dia = {}

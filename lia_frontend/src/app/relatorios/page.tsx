@@ -90,27 +90,27 @@ function ProcedureComparison({ rows, names }: { rows: Row[]; names: Map<number, 
 }
 
 function MaterialConsumptionByProcedure({ rows, names }: { rows: Row[]; names: Map<number, string> }) {
-  const consumption = [...rows]
-    .filter((row) => row.custos_materiais > 0)
+  const procedures = [...rows]
     .sort((first, second) => second.custos_materiais - first.custos_materiais);
-  const maximum = Math.max(...consumption.map((row) => row.custos_materiais), 1);
+  const maximum = Math.max(...procedures.map((row) => row.custos_materiais), 1);
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
     <div>
       <h2 className="text-lg font-semibold text-slate-900">Consumo de materiais por procedimento</h2>
       <p className="mt-1 text-sm text-slate-500">Procedimentos ordenados pelo maior valor consumido em materiais no período.</p>
     </div>
-    {consumption.length ? <div className="mt-6 overflow-x-auto pb-1">
+    {procedures.length ? <div className="mt-6 overflow-x-auto pb-1">
       <div className="flex h-72 min-w-max items-end gap-4 border-b border-slate-200 px-3" role="img" aria-label="Gráfico de colunas do valor consumido em materiais por procedimento">
-        {consumption.map((row) => {
+        {procedures.map((row) => {
           const procedureName = names.get(row.procedimento_id) ?? `Procedimento #${row.procedimento_id}`;
+          const hasMaterialCost = row.custos_materiais > 0;
           return <div key={row.procedimento_id} className="flex h-full w-28 shrink-0 flex-col items-center justify-end gap-2">
-            <strong className="text-xs text-slate-700">{money.format(row.custos_materiais)}</strong>
+            <strong className={`text-xs ${hasMaterialCost ? "text-slate-700" : "text-amber-600"}`}>{hasMaterialCost ? money.format(row.custos_materiais) : "Sem custo"}</strong>
             <div className="flex h-44 w-full items-end justify-center">
               <div
-                className="w-14 rounded-t-xl bg-gradient-to-t from-fuchsia-700 to-fuchsia-400 shadow-sm transition-[height]"
-                style={{ height: `${Math.max((row.custos_materiais / maximum) * 100, 4)}%` }}
-                title={`${procedureName}: ${money.format(row.custos_materiais)}`}
+                className={`w-14 rounded-t-xl shadow-sm transition-[height] ${hasMaterialCost ? "bg-gradient-to-t from-fuchsia-700 to-fuchsia-400" : "bg-amber-200"}`}
+                style={{ height: `${hasMaterialCost ? Math.max((row.custos_materiais / maximum) * 100, 4) : 4}%` }}
+                title={hasMaterialCost ? `${procedureName}: ${money.format(row.custos_materiais)}` : `${procedureName}: custo de materiais não cadastrado`}
               />
             </div>
             <span className="flex h-12 items-start justify-center overflow-hidden pb-2 text-center text-xs font-medium leading-4 text-slate-600" title={procedureName}>{procedureName}</span>
@@ -141,27 +141,39 @@ function RevenueShare({ rows, names }: { rows: Row[]; names: Map<number, string>
 }
 
 function DailyFinancialTrend({ data }: { data: DailyPoint[] }) {
-  const width = 760;
-  const height = 250;
-  const left = 58;
-  const right = 18;
-  const top = 18;
-  const bottom = 34;
+  const width = Math.max(760, data.length * 34 + 76);
+  const height = 280;
+  const left = 64;
+  const right = 12;
+  const top = 16;
+  const bottom = 42;
   const chartWidth = width - left - right;
   const chartHeight = height - top - bottom;
-  const maximum = Math.max(...data.flatMap((item) => [item.faturamento, item.lucro]), 1);
-  const x = (index: number) => left + (index / Math.max(data.length - 1, 1)) * chartWidth;
-  const y = (value: number) => top + chartHeight - (Math.max(value, 0) / maximum) * chartHeight;
-  const points = (field: "faturamento" | "lucro") => data.map((item, index) => `${x(index)},${y(item[field])}`).join(" ");
-  const labels = data.length ? [data[0], data[Math.floor((data.length - 1) / 2)], data[data.length - 1]] : [];
+  const values = data.flatMap((item) => [item.faturamento, item.lucro]);
+  const minimum = Math.min(0, ...values);
+  const maximum = Math.max(0, ...values);
+  const range = Math.max(maximum - minimum, 1);
+  const y = (value: number) => top + ((maximum - value) / range) * chartHeight;
+  const zeroY = y(0);
+  const slotWidth = chartWidth / Math.max(data.length, 1);
+  const barWidth = Math.min(10, slotWidth * 0.32);
+  const ticks = Array.from({ length: 5 }, (_, index) => minimum + (range * index) / 4);
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Evolução financeira diária</h2><p className="mt-1 text-sm text-slate-500">Faturamento e lucro ao longo do período selecionado.</p></div><div className="flex gap-4 text-xs text-slate-500"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Faturamento</span><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Lucro</span></div></div>
-    <div className="mt-4 overflow-x-auto"><svg role="img" aria-label="Evolução diária de faturamento e lucro" viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full min-w-[680px] max-w-[1000px]">
-      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => { const position = top + chartHeight - ratio * chartHeight; return <g key={ratio}><line x1={left} x2={width - right} y1={position} y2={position} stroke="#e2e8f0" strokeWidth="1" /><text x={left - 8} y={position + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{money.format(maximum * ratio).replace(",00", "")}</text></g>; })}
-      <polyline points={points("faturamento")} fill="none" stroke="#6366f1" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-      <polyline points={points("lucro")} fill="none" stroke="#10b981" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-      {labels.map((item, index) => <text key={`${item.data}-${index}`} x={x(index === 0 ? 0 : index === 1 ? Math.floor((data.length - 1) / 2) : data.length - 1)} y={height - 8} textAnchor={index === 0 ? "start" : index === 2 ? "end" : "middle"} fontSize="11" fill="#64748b">{item.data.slice(8, 10)}/{item.data.slice(5, 7)}</text>)}
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-lg font-semibold text-slate-900">Evolução financeira diária</h2><p className="mt-1 text-sm text-slate-500">Faturamento e lucro por dia no período selecionado.</p></div><div className="flex flex-wrap gap-4 text-xs text-slate-500"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-sm bg-indigo-500" />Faturamento</span><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />Lucro</span><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-sm bg-rose-500" />Prejuízo</span></div></div>
+    <div className="mt-4 overflow-x-auto pb-1"><svg role="img" aria-label="Gráfico de barras da evolução diária de faturamento e lucro" viewBox={`0 0 ${width} ${height}`} style={{ minWidth: `${width}px` }} className="block h-[280px] w-full">
+      {ticks.map((value) => { const position = y(value); return <g key={value}><line x1={left} x2={width - right} y1={position} y2={position} stroke="#e2e8f0" strokeWidth="1" /><text x={left - 8} y={position + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{money.format(value).replace(",00", "")}</text></g>; })}
+      <line x1={left} x2={width - right} y1={zeroY} y2={zeroY} stroke="#94a3b8" strokeWidth="1.5" />
+      {data.map((item, index) => {
+        const center = left + (index + 0.5) * slotWidth;
+        const revenueY = y(item.faturamento);
+        const profitY = y(item.lucro);
+        return <g key={item.data}>
+          <rect x={center - barWidth - 1} y={Math.min(revenueY, zeroY)} width={barWidth} height={Math.max(Math.abs(zeroY - revenueY), item.faturamento ? 1 : 0)} rx="2" fill="#6366f1"><title>{`${item.data.slice(8, 10)}/${item.data.slice(5, 7)} · Faturamento: ${money.format(item.faturamento)}`}</title></rect>
+          <rect x={center + 1} y={Math.min(profitY, zeroY)} width={barWidth} height={Math.max(Math.abs(zeroY - profitY), item.lucro ? 1 : 0)} rx="2" fill={item.lucro < 0 ? "#f43f5e" : "#10b981"}><title>{`${item.data.slice(8, 10)}/${item.data.slice(5, 7)} · ${item.lucro < 0 ? "Prejuízo" : "Lucro"}: ${money.format(item.lucro)}`}</title></rect>
+          <text x={center} y={height - 12} textAnchor="middle" fontSize="10" fill="#64748b">{item.data.slice(8, 10)}</text>
+        </g>;
+      })}
     </svg></div>
   </section>;
 }
