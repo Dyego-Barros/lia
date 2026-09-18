@@ -227,11 +227,11 @@ async def sincronizar_historico_openwa(
     ]
     imported = 0
     examined = 0
-    already_synchronized = 0
+    synchronizations_in_progress = 0
     failures: list[dict[str, str]] = []
     for conversation in conversations:
         if not await mongo.claim_history_sync(conversation["id"]):
-            already_synchronized += 1
+            synchronizations_in_progress += 1
             continue
         try:
             added, found = await _sync_openwa_conversation(
@@ -249,7 +249,7 @@ async def sincronizar_historico_openwa(
         "conversas": len(conversations),
         "mensagens_examinadas": examined,
         "mensagens_importadas": imported,
-        "conversas_ja_sincronizadas": already_synchronized,
+        "sincronizacoes_em_andamento": synchronizations_in_progress,
         "falhas": failures,
     }
 

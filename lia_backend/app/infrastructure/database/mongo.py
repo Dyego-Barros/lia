@@ -268,13 +268,12 @@ async def unread_summary() -> dict[str, int]:
 
 
 async def claim_history_sync(conversation_id: str) -> bool:
-    """Reserva uma única sincronização, recuperando reservas abandonadas."""
+    """Impede sincronizações concorrentes e recupera reservas abandonadas."""
     collection = await conversation_collection()
     stale_before = datetime.now() - timedelta(minutes=15)
     result = await collection.find_one_and_update(
         {
             "_id": _object_id(conversation_id),
-            "historico_openwa_sincronizado_em": {"$exists": False},
             "$or": [
                 {"historico_openwa_sincronizando_em": {"$exists": False}},
                 {"historico_openwa_sincronizando_em": {"$lt": stale_before}},
