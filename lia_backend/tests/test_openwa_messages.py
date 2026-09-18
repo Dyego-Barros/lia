@@ -58,6 +58,33 @@ def test_normalizes_human_outgoing_openwa_history_message():
     assert message["external_id"] == "false_5511999999999@c.us_ABC"
 
 
+def test_normalizes_persisted_outgoing_direction_without_from_me():
+    message = _openwa_history_message({
+        "waMessageId": "outgoing-message",
+        "direction": "outgoing",
+        "body": "Resposta feita pela atendente",
+        "timestamp": 1_789_000_000,
+        "type": "text",
+    })
+
+    assert message is not None
+    assert message["direcao"] == "saida"
+    assert message["origem"] == "atendente_whatsapp"
+    assert message["external_id"] == "outgoing-message"
+
+
+def test_does_not_treat_string_false_from_me_as_outgoing():
+    message = _openwa_history_message({
+        "id": "incoming-message",
+        "fromMe": "false",
+        "body": "Mensagem da cliente",
+        "timestamp": 1_789_000_000,
+    })
+
+    assert message is not None
+    assert message["direcao"] == "entrada"
+
+
 def test_ignores_history_entries_without_text():
     assert _openwa_history_message({"id": "reaction", "fromMe": True}) is None
 

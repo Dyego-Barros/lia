@@ -13,7 +13,7 @@ from app.infrastructure.events.conversation_events import conversation_events
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, UpdateOne
 
 
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://mongodb:27017")
@@ -314,15 +314,28 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
         raise KeyError("Conversa não encontrada")
 
     existing = conversation.get("mensagens", [])
+    existing_by_external_id = {
+        item["external_id"]: item for item in existing if item.get("external_id")
+    }
     external_ids = {item.get("external_id") for item in existing if item.get("external_id")}
     fingerprints = [
         (item.get("direcao"), item.get("conteudo"), item.get("enviado_em"))
         for item in existing
     ]
     imported: list[dict[str, Any]] = []
+    corrections: list[UpdateOne] = []
     for candidate in sorted(messages, key=lambda item: item["enviado_em"]):
         external_id = candidate.get("external_id")
         if external_id and external_id in external_ids:
+            stored = existing_by_external_id[external_id]
+            if candidate["direcao"] == "saida" and stored.get("direcao") != "saida":
+                corrections.append(UpdateOne(
+                    {"_id": object_id, "mensagens.external_id": external_id},
+                    {"$set": {
+                        "mensagens.$.direcao": "saida",
+                        "mensagens.$.origem": candidate.get("origem") or "atendente_whatsapp",
+                    }},
+                ))
             continue
         duplicate = any(
             direction == candidate["direcao"]
@@ -349,8 +362,14 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
         if external_id:
             external_ids.add(external_id)
 
+    corrected = 0
+    if corrections:
+        result = await collection.bulk_write(corrections, ordered=False)
+        corrected = result.modified_count
     if not imported:
-        return 0
+        if corrected:
+            await conversation_events.publish(conversation_id)
+        return corrected
     latest = max(item["enviado_em"] for item in imported)
     update: dict[str, Any] = {
         "$push": {"mensagens": {"$each": imported, "$sort": {"enviado_em": 1}, "$slice": -MONGODB_MAX_MESSAGES}},
@@ -364,7 +383,7 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
             update["$set"] = {"ultima_mensagem_recebida": newest_inbound}
     await collection.update_one({"_id": object_id}, update)
     await conversation_events.publish(conversation_id)
-    return len(imported)
+    return len(imported) + corrected
 
 
 async def update_status(conversation_id: str, status: str) -> dict[str, Any] | None:

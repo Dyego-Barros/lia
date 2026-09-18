@@ -69,7 +69,7 @@ def _whatsapp_view(item: WhatsAppIntegrationModel) -> dict[str, Any]:
     elif item.tipo == "openwa":
         # O OpenWA fica na rede Docker e chama a API pelo nome do serviço.
         internal_url = os.getenv("OPENWA_WEBHOOK_URL", "http://api:8000/webhooks/openwa")
-        webhook_url = f"{internal_url}/{{webhook_secret}}"
+        webhook_url = f"{internal_url}/{secret}" if secret else f"{internal_url}/{{webhook_secret}}"
     else:
         webhook_url = f"{base_url}/webhooks/whatsapp/{item.id}/{{webhook_secret}}" if secret else f"{base_url}/webhooks/whatsapp/{item.id}"
     return {"id": item.id, "nome": item.nome, "tipo": item.tipo, "prioridade": item.prioridade, "ativo": item.ativo, "credenciais_configuradas": True, "webhook_configurado": bool(secret), "webhook_url": webhook_url, "webhook_verify_token": None}
@@ -567,7 +567,7 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     ).strip()
     if not content:
         return None
-    external_id = str(item.get("id") or item.get("messageId") or nested_key.get("id") or "").strip() or None
+    external_id = str(item.get("id") or item.get("messageId") or item.get("waMessageId") or nested_key.get("id") or "").strip() or None
     raw_timestamp = item.get("timestamp") or item.get("messageTimestamp") or item.get("createdAt") or item.get("created_at")
     try:
         if isinstance(raw_timestamp, (int, float)) or (isinstance(raw_timestamp, str) and raw_timestamp.isdigit()):
@@ -582,6 +582,11 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
     from_me = item.get("fromMe")
     if from_me is None:
         from_me = nested_key.get("fromMe")
+    if from_me is None:
+        direction = str(item.get("direction") or nested_message.get("direction") or "").casefold()
+        from_me = direction in {"outgoing", "outbound", "sent", "saida"}
+    elif isinstance(from_me, str):
+        from_me = from_me.casefold() in {"true", "1", "yes"}
     return {
         "external_id": external_id,
         "direcao": "saida" if from_me else "entrada",
@@ -611,6 +616,23 @@ async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conve
     offset = 0
     history: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=30) as client:
+        # O histórico ao vivo inclui mensagens escritas no celular/aparelhos
+        # conectados que versões do OpenWA não persistem no banco local.
+        try:
+            live_response = await client.get(
+                f"{base_url}/api/sessions/{session_id}/messages/{quote(chat_id, safe='')}/history",
+                headers={"X-API-Key": api_key},
+                params={"limit": min(maximum, 100), "deep": "true", "includeMedia": "false"},
+            )
+            live_response.raise_for_status()
+            live_payload = live_response.json()
+            live_rows = live_payload.get("messages", []) if isinstance(live_payload, dict) else live_payload
+            if isinstance(live_rows, list):
+                history.extend(item for item in live_rows if isinstance(item, dict))
+        except (httpx.HTTPError, ValueError):
+            # Mantém compatibilidade com versões/engines sem histórico ao vivo.
+            logger.warning("Histórico ao vivo indisponível para a conversa OpenWA %s", conversation["id"])
+
         while offset < maximum:
             limit = min(page_size, maximum - offset)
             response = await client.get(
@@ -628,7 +650,17 @@ async def _sync_openwa_conversation(integration: WhatsAppIntegrationModel, conve
             total = payload.get("total") if isinstance(payload, dict) else None
             if len(rows) < limit or (isinstance(total, int) and offset >= total):
                 break
-    normalized = [message for item in history if (message := _openwa_history_message(item))]
+    normalized_by_id: dict[str, dict[str, Any]] = {}
+    normalized_without_id: list[dict[str, Any]] = []
+    for item in history:
+        message = _openwa_history_message(item)
+        if not message:
+            continue
+        if message["external_id"]:
+            normalized_by_id[message["external_id"]] = message
+        else:
+            normalized_without_id.append(message)
+    normalized = [*normalized_by_id.values(), *normalized_without_id]
     imported = await mongo.import_messages(conversation["id"], normalized)
     return imported, len(history)
 
