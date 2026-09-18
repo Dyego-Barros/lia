@@ -304,6 +304,29 @@ async def release_history_sync(conversation_id: str) -> None:
     )
 
 
+def _message_fingerprint(message: dict[str, Any]) -> tuple[str | None, str | None, str, int] | None:
+    sent_at = message.get("enviado_em")
+    if not isinstance(sent_at, datetime):
+        return None
+    return (
+        message.get("direcao"),
+        message.get("conteudo"),
+        "text" if message.get("tipo", "text") in {"chat", "text"} else str(message.get("tipo")),
+        int(sent_at.timestamp()),
+    )
+
+
+def _has_equivalent(fingerprints: set[tuple[str | None, str | None, str, int]], message: dict[str, Any]) -> bool:
+    fingerprint = _message_fingerprint(message)
+    if fingerprint is None:
+        return False
+    direction, content, message_type, sent_at = fingerprint
+    return any(
+        (direction, content, message_type, sent_at + offset) in fingerprints
+        for offset in range(-2, 3)
+    )
+
+
 async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) -> int:
     """Importa histórico sem duplicar e preservando a ordem cronológica."""
     if not messages:
@@ -318,28 +341,38 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
     existing_by_external_id = {
         item["external_id"]: item for item in existing if item.get("external_id")
     }
-    external_ids = {item.get("external_id") for item in existing if item.get("external_id")}
-    fingerprints = [
-        (item.get("direcao"), item.get("conteudo"), item.get("enviado_em"))
-        for item in existing
-    ]
-    imported: list[dict[str, Any]] = []
     corrections: list[tuple[str, str]] = []
+    for candidate in messages:
+        external_id = candidate.get("external_id")
+        if external_id and external_id in existing_by_external_id:
+            stored = existing_by_external_id[external_id]
+            if candidate["direcao"] == "saida" and stored.get("direcao") != "saida":
+                origin = candidate.get("origem") or "atendente_whatsapp"
+                corrections.append((external_id, origin))
+                # Atualiza a visão em memória antes da deduplicação. Sem
+                # isso, a cópia antiga ainda parece ser uma mensagem de entrada.
+                stored["direcao"] = "saida"
+                stored["origem"] = origin
+
+    retained: list[dict[str, Any]] = []
+    duplicate_ids: list[str] = []
+    fingerprints: set[tuple[str | None, str | None, str, int]] = set()
+    for stored in sorted(existing, key=lambda item: item.get("enviado_em") or datetime.min):
+        if _has_equivalent(fingerprints, stored) and stored.get("id"):
+            duplicate_ids.append(stored["id"])
+        else:
+            retained.append(stored)
+            fingerprint = _message_fingerprint(stored)
+            if fingerprint:
+                fingerprints.add(fingerprint)
+
+    external_ids = {item.get("external_id") for item in retained if item.get("external_id")}
+    imported: list[dict[str, Any]] = []
     for candidate in sorted(messages, key=lambda item: item["enviado_em"]):
         external_id = candidate.get("external_id")
         if external_id and external_id in external_ids:
-            stored = existing_by_external_id[external_id]
-            if candidate["direcao"] == "saida" and stored.get("direcao") != "saida":
-                corrections.append((external_id, candidate.get("origem") or "atendente_whatsapp"))
             continue
-        duplicate = any(
-            direction == candidate["direcao"]
-            and content == candidate["conteudo"]
-            and isinstance(sent_at, datetime)
-            and abs((sent_at - candidate["enviado_em"]).total_seconds()) <= 120
-            for direction, content, sent_at in fingerprints
-        )
-        if duplicate:
+        if _has_equivalent(fingerprints, candidate):
             continue
         message = {
             "id": str(uuid4()),
@@ -353,7 +386,9 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
             "mime_type": candidate.get("mime_type"),
         }
         imported.append(message)
-        fingerprints.append((message["direcao"], message["conteudo"], message["enviado_em"]))
+        fingerprint = _message_fingerprint(message)
+        if fingerprint:
+            fingerprints.add(fingerprint)
         if external_id:
             external_ids.add(external_id)
 
@@ -383,8 +418,13 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
                     }},
                 )
                 corrected += result.modified_count
+    if duplicate_ids:
+        await collection.update_one(
+            {"_id": object_id},
+            {"$pull": {"mensagens": {"id": {"$in": duplicate_ids}}}},
+        )
     if not imported:
-        if corrected:
+        if corrected or duplicate_ids:
             await conversation_events.publish(conversation_id)
         return corrected
     latest = max(item["enviado_em"] for item in imported)

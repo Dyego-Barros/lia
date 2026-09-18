@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 import httpx
 
 from app.api.routes.integracoes import (
@@ -7,6 +9,7 @@ from app.api.routes.integracoes import (
     _openwa_phone_candidates,
     _provider_message_id,
 )
+from app.infrastructure.database.mongo import _has_equivalent, _message_fingerprint
 
 
 def test_extracts_openwa_message_id_from_nested_result():
@@ -114,3 +117,21 @@ def test_extracts_nested_openwa_image_metadata():
     })
 
     assert (mime_type, filename, media_kind) == ("image/webp", "foto.webp", "image")
+
+
+def test_detects_duplicate_from_live_and_persisted_history_with_different_ids():
+    sent_at = datetime(2026, 9, 17, 22, 39, 49)
+    stored = {"direcao": "saida", "conteudo": "Pulseira, anéis, brincos", "tipo": "text", "enviado_em": sent_at}
+    fingerprints = {_message_fingerprint(stored)}
+    candidate = {**stored, "external_id": "different-provider-id", "enviado_em": sent_at + timedelta(seconds=1)}
+
+    assert _has_equivalent(fingerprints, candidate) is True
+
+
+def test_preserves_repeated_message_outside_duplicate_window():
+    sent_at = datetime(2026, 9, 17, 22, 39, 49)
+    stored = {"direcao": "saida", "conteudo": "Ok", "tipo": "text", "enviado_em": sent_at}
+    fingerprints = {_message_fingerprint(stored)}
+    candidate = {**stored, "enviado_em": sent_at + timedelta(seconds=3)}
+
+    assert _has_equivalent(fingerprints, candidate) is False

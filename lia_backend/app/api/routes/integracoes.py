@@ -587,11 +587,12 @@ def _openwa_history_message(item: dict[str, Any]) -> dict[str, Any] | None:
         from_me = direction in {"outgoing", "outbound", "sent", "saida"}
     elif isinstance(from_me, str):
         from_me = from_me.casefold() in {"true", "1", "yes"}
+    raw_type = str(item.get("type") or "text").casefold()
     return {
         "external_id": external_id,
         "direcao": "saida" if from_me else "entrada",
         "origem": "atendente_whatsapp" if from_me else "cliente",
-        "tipo": "arquivo" if mime_type else str(item.get("type") or "text"),
+        "tipo": "arquivo" if mime_type else ("text" if raw_type in {"chat", "text"} else raw_type),
         "conteudo": content,
         "enviado_em": sent_at,
         "arquivo_nome": filename,
