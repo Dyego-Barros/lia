@@ -111,9 +111,10 @@ export default function ConversasPage() {
       const result = await apiPost<SyncResult>("/integracoes/conversas/sincronizar-openwa");
       await load(page);
       if (selected) await loadMessages(selected.id);
-      const details = `${result.mensagens_importadas} mensagem${result.mensagens_importadas === 1 ? "" : "s"} importada${result.mensagens_importadas === 1 ? "" : "s"} de ${result.conversas} conversa${result.conversas === 1 ? "" : "s"}.`;
+      const importedLabel = result.mensagens_importadas === 1 ? "mensagem importada" : "mensagens importadas";
+      const details = `${result.mensagens_importadas} ${importedLabel} de ${result.conversas} conversa${result.conversas === 1 ? "" : "s"}.`;
       setNotice(result.falhas.length
-        ? { message: `Sincronização concluída com ${result.falhas.length} falha${result.falhas.length === 1 ? "" : "s"}. ${details}`, type: "warning" }
+        ? { message: `Sincronização concluída com ${result.falhas.length} falha${result.falhas.length === 1 ? "" : "s"}. ${details} Motivo: ${result.falhas[0].erro}`, type: "warning" }
         : { message: `Sincronização concluída. ${details}`, type: "success" });
     } catch (reason) {
       setNotice({ message: reason instanceof Error ? reason.message : "Não foi possível sincronizar o OpenWA.", type: "error" });

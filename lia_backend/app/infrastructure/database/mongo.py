@@ -14,6 +14,7 @@ from app.infrastructure.events.conversation_events import conversation_events
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from pymongo import ReturnDocument, UpdateOne
+from pymongo.errors import PyMongoError
 
 
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://mongodb:27017")
@@ -323,19 +324,13 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
         for item in existing
     ]
     imported: list[dict[str, Any]] = []
-    corrections: list[UpdateOne] = []
+    corrections: list[tuple[str, str]] = []
     for candidate in sorted(messages, key=lambda item: item["enviado_em"]):
         external_id = candidate.get("external_id")
         if external_id and external_id in external_ids:
             stored = existing_by_external_id[external_id]
             if candidate["direcao"] == "saida" and stored.get("direcao") != "saida":
-                corrections.append(UpdateOne(
-                    {"_id": object_id, "mensagens.external_id": external_id},
-                    {"$set": {
-                        "mensagens.$.direcao": "saida",
-                        "mensagens.$.origem": candidate.get("origem") or "atendente_whatsapp",
-                    }},
-                ))
+                corrections.append((external_id, candidate.get("origem") or "atendente_whatsapp"))
             continue
         duplicate = any(
             direction == candidate["direcao"]
@@ -364,8 +359,30 @@ async def import_messages(conversation_id: str, messages: list[dict[str, Any]]) 
 
     corrected = 0
     if corrections:
-        result = await collection.bulk_write(corrections, ordered=False)
-        corrected = result.modified_count
+        try:
+            result = await collection.bulk_write([
+                UpdateOne(
+                    {"_id": object_id, "mensagens.external_id": external_id},
+                    {"$set": {
+                        "mensagens.$.direcao": "saida",
+                        "mensagens.$.origem": origin,
+                    }},
+                )
+                for external_id, origin in corrections
+            ], ordered=False)
+            corrected = result.modified_count
+        except (PyMongoError, TypeError):
+            # Algumas combinações de Motor/PyMongo rejeitam UpdateOne no
+            # bulk mesmo aceitando a mesma operação individualmente.
+            for external_id, origin in corrections:
+                result = await collection.update_one(
+                    {"_id": object_id, "mensagens.external_id": external_id},
+                    {"$set": {
+                        "mensagens.$.direcao": "saida",
+                        "mensagens.$.origem": origin,
+                    }},
+                )
+                corrected += result.modified_count
     if not imported:
         if corrected:
             await conversation_events.publish(conversation_id)
