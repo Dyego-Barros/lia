@@ -14,6 +14,10 @@ class WhatsAppIntegrationUpdate(WhatsAppIntegrationCreate):
     credenciais: dict[str, str] | None = None
 
 
+class WhatsAppAIStatusUpdate(BaseModel):
+    ativa: bool
+
+
 class AIIntegrationCreate(BaseModel):
     nome: str = Field(min_length=2, max_length=100)
     tipo: str = Field(pattern="^(openai|groq|ollama|anthropic|custom)$")

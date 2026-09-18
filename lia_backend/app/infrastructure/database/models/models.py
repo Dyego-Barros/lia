@@ -219,6 +219,7 @@ class WhatsAppIntegrationModel:
     webhook_token_encriptado: Mapped[Optional[str]] = mapped_column(Text, default=None, nullable=True)
     prioridade: Mapped[int] = mapped_column(nullable=False, default=1)
     ativo: Mapped[bool] = mapped_column(nullable=False, default=True)
+    ia_ativa: Mapped[bool] = mapped_column(nullable=False, default=True)
     data_criacao: Mapped[datetime] = mapped_column(default=SAO_PAULO, nullable=False)
 
 

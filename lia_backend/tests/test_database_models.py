@@ -3,6 +3,7 @@ import unittest
 from app.infrastructure.database.models.models import (
     ConsumoMaterialModel,
     ProcedimentoMaterialModel,
+    WhatsAppIntegrationModel,
 )
 
 
@@ -17,6 +18,16 @@ class DatabaseModelTest(unittest.TestCase):
             # raised InvalidRequestError before an INSERT was emitted.
             characteristics = model.__table__._sentinel_column_characteristics
             self.assertEqual(characteristics.columns, (primary_key,))
+
+    def test_whatsapp_ai_is_enabled_by_default_without_disabling_webhook(self):
+        integration = WhatsAppIntegrationModel(
+            nome="OpenWA",
+            tipo="openwa",
+            credenciais_encriptadas="encrypted",
+        )
+
+        self.assertTrue(integration.ativo)
+        self.assertTrue(integration.ia_ativa)
 
 
 if __name__ == "__main__":
