@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarClock, CalendarDays, CalendarPlus, CircleDollarSign, CreditCard, MessageSquareText, UserCheck, UserPlus, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarClock, CalendarDays, CalendarPlus, CircleDollarSign, CreditCard, MessageSquareText, PackageOpen, UserCheck, UserPlus, Users } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { ContactAvatar } from "@/components/contact-avatar";
 import { NotificationAlert } from "@/components/notification-alert";
 
-type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number };
+type DailyReport = { agendamentos: number; clientes_do_dia: number; faturamento: number; custos_materiais: number };
 type Appointment = { id?: number; cliente_id: number; procedimento_id: number; profissional_id?: number | null; data_hora: string; status: string; valor_cobrado?: number | null; status_pagamento?: string };
 type Client = { id?: number; nome: string };
 type Procedure = { id?: number; nome: string; duracao: number; preco: number };
@@ -110,6 +110,7 @@ export default function DashboardPage() {
     { title: "Procedimentos do dia", value: report?.agendamentos ?? 0, hint: "agendados hoje", icon: Activity, cardClass: "border-fuchsia-200 bg-gradient-to-br from-fuchsia-50 to-white", titleClass: "text-fuchsia-800", iconClass: "bg-fuchsia-100 text-fuchsia-700", hintClass: "text-fuchsia-700" },
     { title: "Clientes do dia", value: report?.clientes_do_dia ?? 0, hint: "com atendimento hoje", icon: Users, cardClass: "border-sky-200 bg-gradient-to-br from-sky-50 to-white", titleClass: "text-sky-800", iconClass: "bg-sky-100 text-sky-700", hintClass: "text-sky-700" },
     { title: "Total ganho no dia", value: money.format(report?.faturamento ?? 0), hint: "faturamento de hoje", icon: CircleDollarSign, cardClass: "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white", titleClass: "text-emerald-800", iconClass: "bg-emerald-100 text-emerald-700", hintClass: "text-emerald-700" },
+    { title: "Gasto com materiais", value: money.format(report?.custos_materiais ?? 0), hint: "nos procedimentos concluídos", icon: PackageOpen, cardClass: "border-violet-200 bg-gradient-to-br from-violet-50 to-white", titleClass: "text-violet-800", iconClass: "bg-violet-100 text-violet-700", hintClass: "text-violet-700" },
     { title: "Pagamentos pendentes", value: pendingPayments.length, hint: money.format(expectedPending), icon: CreditCard, cardClass: "border-amber-200 bg-gradient-to-br from-amber-50 to-white", titleClass: "text-amber-800", iconClass: "bg-amber-100 text-amber-700", hintClass: "text-amber-700" },
   ];
 
@@ -123,7 +124,7 @@ export default function DashboardPage() {
     <section className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm"><p className="text-sm font-medium uppercase tracking-[0.25em] text-fuchsia-700">Mayssa · Dashboard</p><h1 className="mt-2 text-3xl font-semibold text-slate-900">Resumo do dia</h1><p className="mt-2 max-w-3xl text-sm text-slate-500">Agenda, pagamentos e desempenho em uma visão rápida.</p></section>
     <NotificationAlert message={error} type="error" />
 
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(({ title, value, hint, icon: Icon, cardClass, titleClass, iconClass, hintClass }) => <div key={title} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${titleClass}`}>{title}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p><p className={`mt-2 text-sm font-medium ${hintClass}`}>{hint}</p></div>)}</div>
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">{cards.map(({ title, value, hint, icon: Icon, cardClass, titleClass, iconClass, hintClass }) => <div key={title} className={`rounded-2xl border p-5 shadow-sm ${cardClass}`}><div className="flex items-center justify-between"><p className={`text-sm font-medium ${titleClass}`}>{title}</p><span className={`rounded-xl p-2 ${iconClass}`}><Icon size={18} /></span></div><p className="mt-4 text-2xl font-semibold text-slate-900">{value}</p><p className={`mt-2 text-sm font-medium ${hintClass}`}>{hint}</p></div>)}</div>
 
     <div className="grid gap-4 xl:grid-cols-3">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2"><div className="flex items-center justify-between"><div><h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><CalendarClock size={19} className="text-fuchsia-700" />Próximos atendimentos</h2><p className="mt-1 text-sm text-slate-500">O que ainda está previsto para hoje.</p></div><Link href="/calendario" className="text-sm font-medium text-fuchsia-700">Ver calendário</Link></div>{upcoming.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-400"><tr><th className="px-3 py-2.5">Horário</th><th className="px-3 py-2.5">Cliente</th><th className="px-3 py-2.5">Procedimento</th><th className="px-3 py-2.5">Profissional</th><th className="px-3 py-2.5">Status</th></tr></thead><tbody>{upcoming.map((item) => <tr key={item.id} className="border-b border-slate-100 last:border-0"><td className="px-3 py-3 font-semibold text-slate-900">{item.data_hora.slice(11, 16)}</td><td className="px-3 py-3 text-slate-700">{clientNames.get(item.cliente_id) ?? `Cliente #${item.cliente_id}`}</td><td className="px-3 py-3 text-slate-500">{procedureMap.get(item.procedimento_id)?.nome ?? `Procedimento #${item.procedimento_id}`}</td><td className="px-3 py-3 text-slate-500">{professionalNames.get(item.profissional_id ?? 0) ?? "Sem profissional"}</td><td className="px-3 py-3"><span className={`status-pill status-${item.status}`}>{statusLabels[item.status]?.replace(/s$/, "") ?? item.status}</span></td></tr>)}</tbody></table></div> : <div className="mt-4 rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-400">Nenhum atendimento restante hoje.</div>}</section>
