@@ -26,12 +26,13 @@ on:
         - name: Instala Dependencias
           run:  |
             python3 -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install pytest
+            pip install uv
+            uv sync pyproject.toml
+            
         
         - name: Executa Testes
           run: |
-            pytest -v
+            uv run pytest -v
     
   #=========================
   # Inico Build
@@ -52,11 +53,12 @@ on:
         - name: Instala build
           run: |
             python3 -m pip install --upgrade pip
-            pip install build
+            pip install uv
+            uv add build
 
         - name: Executa Build
           run: |
-            python3 -m build
+            uv run python3 -m build
 
     
   #=========================
