@@ -37,7 +37,7 @@ jobs:
         run: |
           pwd
           ls -la
-          uv run pytest -v
+          uv run python3 -m pytest -v
   
 #=========================
 # Inico Build
