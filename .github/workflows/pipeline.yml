@@ -16,7 +16,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-      - uses: actions/checkout@v3
+        uses: actions/checkout@v3
 
       - name: Seleciona Python
         uses: actions/setup-python@v4
@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-      - uses: actions/checkout@v3
+        uses: actions/checkout@v3
 
       - name: Seleciona Python
         uses: actions/setup-python@v4
@@ -75,7 +75,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-      - uses: actions/checkout@v3
+        uses: actions/checkout@v3
 
       - name: Configura CodeQl
         uses: github/codeql-action/init@v4
