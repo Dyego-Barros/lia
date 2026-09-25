@@ -35,6 +35,8 @@ jobs:
       - name: Executa Testes
         working-directory: ./lia_backend
         run: |
+          pwd
+          ls -la
           uv run pytest -v
   
 #=========================
