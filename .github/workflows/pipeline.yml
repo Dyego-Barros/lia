@@ -23,14 +23,16 @@ jobs:
         with:
           python-version: 3.14
 
-      - name: Instala Dependencias
+      - name: Instala Dependencias  
+        working-directory: ./lia_backend      
         run:  |
           python3 -m pip install --upgrade pip
           pip install uv
-          uv sync pyproject.toml
+          uv sync 
           
       
       - name: Executa Testes
+        working-directory: ./lia_backend
         run: |
           uv run pytest -v
   
@@ -51,12 +53,14 @@ jobs:
           python-version: 3.14
 
       - name: Instala build
+        working-directory: ./lia_backend
         run: |
           python3 -m pip install --upgrade pip
           pip install uv
           uv add build
 
       - name: Executa Build
+        working-directory: ./lia_backend
         run: |
           uv run python3 -m build
 
