@@ -3,8 +3,8 @@ name: CD Python
 on:
  workflow_run:
     worflow: CI Python
-   types: 
-     - completed
+    types: 
+      - completed
 
 jobs: 
   deploy:
