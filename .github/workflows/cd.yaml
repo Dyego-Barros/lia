@@ -1,0 +1,15 @@
+name: CD Python
+
+on:
+ workflow_run:
+    worflow: CI Python
+   types: 
+     - completed
+
+jobs: 
+  deploy:
+    if: ${{github.events.workflow_run.conclusion == 'success'}}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3 
