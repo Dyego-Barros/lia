@@ -13,7 +13,13 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+
+    matrix:
+      python-version: [3.14]
+      
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -44,6 +50,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: tests
+
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+
+    matrix:
+      python-version: [3.14]
+
+    containers:
+      python:
+        image: python:3.14-slim
 
     steps:
       - name: Checkout repository
