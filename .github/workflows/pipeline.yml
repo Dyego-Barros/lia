@@ -58,7 +58,7 @@ jobs:
       matrix:
         python-version: [3.14]
 
-    containers:
+    container:
       python:
         image: python:3.14-slim
 
